@@ -26,7 +26,7 @@ The Experimental settings toggle connects/disconnects without restarting. Launch
 ## Behavior
 
 - Main menu is skipped when event flag `skipMainMenu` is on (default).
-- Idle HUD shows **READY/SCORE** (current set) and **UP NEXT** from `queue.preview`.
+- Idle HUD (mockup): current song title/artists on top, album art on the left, current-set player names in a two-column grid beside the art, next song + that set’s player names bottom-left, compact YAQ join QR (~176px) on the right. No “YAQ EVENT” title.
 - Admin launches the on-deck set in YAQ → YARG applies players and opens Difficulty Select.
 - After the score screen Continue → idle again for the next group.
 - **Hot mic** (flag `hotMic`) keeps vocal monitoring up for host announcements.
@@ -42,6 +42,7 @@ Pushed as `{ type: "settings.update", flags }` on connect and when admin saves. 
 | `showUpNextHud` | `true` | Show idle OnGUI up-next / ready HUD |
 | `skipMainMenu` | `true` | Hide main menu while stream is active |
 | `openDifficultySelect` | `true` | Open Difficulty Select on `set.prepare` / `set.launch` |
+| `addTestBots` | `false` | Fill empty guitar, bass, drums, and vocals with YAQ Bot test players |
 
 Toggle these under **YAQ Admin → YARG event flags**.
 
@@ -83,3 +84,12 @@ While YARG is connected, Admin → **Enter Event Mode** / **Exit Event Mode** (o
 - Bind controllers/profiles once in a normal YARG session before the event if possible.
 - YAQ folder-scan hashes are provisional until YARG syncs; prefer launching YARG Event before guests queue when possible.
 - LGPL-3.0 (same as upstream YARG). Keep this fork clearly marked as modified for events.
+
+## Linux (Fedora) inotify
+
+Unity Play can fail if `FileSystemWatcher` hits `fs.inotify.max_user_instances` (default 128). YARG now logs and continues without the watcher. To raise the limit (needs sudo):
+
+```bash
+sudo sysctl -w fs.inotify.max_user_instances=1024
+echo 'fs.inotify.max_user_instances=1024' | sudo tee /etc/sysctl.d/99-inotify-instances.conf
+```

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
 using Cysharp.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
@@ -39,6 +40,9 @@ namespace YARG.YAQ
         private GUIStyle _titleStyle;
         private GUIStyle _bodyStyle;
         private GUIStyle _mutedStyle;
+        private GUIStyle _qrCaptionStyle;
+        private GUIStyle _nextTitleStyle;
+        private GUIStyle _nextPlayersStyle;
         private readonly ConcurrentQueue<Action> _mainThread = new();
 
         private Texture2D _currentCover;
@@ -46,6 +50,11 @@ namespace YARG.YAQ
         private string _currentCoverHash;
         private string _previewCoverHash;
         private int _coverLoadGeneration;
+
+        private Texture2D _qrTexture;
+        private string _qrJoinUrl;
+        private int _qrLoadGeneration;
+        private float _nextQrRetryAt;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Bootstrap()
@@ -102,6 +111,7 @@ namespace YARG.YAQ
                 {
                     SendState("idle");
                     TrySyncLibrary();
+                    RequestQr();
                 }
             });
             _bridge.Disconnected += () => Enqueue(() =>
@@ -121,6 +131,7 @@ namespace YARG.YAQ
             ApplyMainMenuVisibility();
             EnsureHotMics();
             ReportEventModeState();
+            RequestQr();
         }
 
         private void StopBridge()
@@ -136,6 +147,7 @@ namespace YARG.YAQ
             _phase = "idle";
             _status = "YAQ stream off";
             ClearCovers();
+            ClearQr();
             ApplyMainMenuVisibility();
         }
 
@@ -153,6 +165,7 @@ namespace YARG.YAQ
             TrySyncLibrary();
             SendState("idle");
             ReportEventModeState();
+            RequestQr();
             YargLogger.LogInfo("YAQ entered Event Mode");
         }
 
@@ -186,6 +199,7 @@ namespace YARG.YAQ
         private void OnDestroy()
         {
             ClearCovers();
+            ClearQr();
             _bridge?.Dispose();
             if (Instance == this) Instance = null;
         }
@@ -216,6 +230,12 @@ namespace YARG.YAQ
             }
 
             EnsureHotMics();
+
+            if (_qrTexture == null && Time.unscaledTime >= _nextQrRetryAt)
+            {
+                _nextQrRetryAt = Time.unscaledTime + 5f;
+                RequestQr();
+            }
         }
 
         private void OnGUI()
@@ -228,73 +248,191 @@ namespace YARG.YAQ
             }
 
             EnsureStyles();
+            var layout = ComputeHudLayout(Screen.width, Screen.height);
 
-            const float pad = 48f;
-            const float artSize = 280f;
-            GUILayout.BeginArea(new Rect(pad, pad, Screen.width - pad * 2f, Screen.height - pad * 2f));
-            GUILayout.Label("YAQ EVENT", _titleStyle);
-            GUILayout.Label(_status, _mutedStyle);
-            GUILayout.Space(24f);
+            DrawCurrentHeader(layout.TitleRect);
+            if (TryGetCurrentSong(out var cover, out _, out _, out var currentNames))
+            {
+                DrawAlbumArt(layout.ArtRect, cover);
+                DrawPlayerGrid(layout.PlayersRect, currentNames);
+            }
+
+            DrawNextSong(layout.NextRect);
+            DrawJoinQr(layout.QrCaptionRect, layout.QrRect);
+        }
+
+        internal readonly struct EventHudLayout
+        {
+            public readonly Rect TitleRect;
+            public readonly Rect ArtRect;
+            public readonly Rect PlayersRect;
+            public readonly Rect NextRect;
+            public readonly Rect QrCaptionRect;
+            public readonly Rect QrRect;
+
+            public EventHudLayout(
+                Rect titleRect,
+                Rect artRect,
+                Rect playersRect,
+                Rect nextRect,
+                Rect qrCaptionRect,
+                Rect qrRect)
+            {
+                TitleRect = titleRect;
+                ArtRect = artRect;
+                PlayersRect = playersRect;
+                NextRect = nextRect;
+                QrCaptionRect = qrCaptionRect;
+                QrRect = qrRect;
+            }
+        }
+
+        /// <summary>
+        /// Mockup layout: current title on top, art + two-column players, next song
+        /// bottom-left, compact QR bottom-right (~176px) inside the padded game view.
+        /// </summary>
+        internal static EventHudLayout ComputeHudLayout(float screenW, float screenH)
+        {
+            const float artMax = 280f;
+            const float qrMax = 176f;
+            const float gap = 24f;
+            const float captionH = 22f;
+
+            var pad = Mathf.Clamp(Mathf.Min(screenW, screenH) * 0.045f, 16f, 48f);
+            var areaX = pad;
+            var areaY = pad;
+            var areaW = Mathf.Max(1f, screenW - pad * 2f);
+            var areaH = Mathf.Max(1f, screenH - pad * 2f);
+
+            var titleH = Mathf.Clamp(areaH * 0.16f, 56f, 88f);
+            var nextH = Mathf.Clamp(areaH * 0.2f, 72f, 110f);
+
+            var qrSize = Mathf.Min(qrMax, areaW * 0.2f, areaH * 0.42f);
+            qrSize = Mathf.Clamp(qrSize, 96f, qrMax);
+
+            var qrX = areaX + areaW - qrSize;
+            var qrY = areaY + areaH - qrSize;
+            if (qrY < areaY + titleH + captionH + gap)
+            {
+                qrY = areaY + titleH + captionH + gap;
+                qrSize = Mathf.Clamp(areaY + areaH - qrY, 32f, qrMax);
+                qrX = areaX + areaW - qrSize;
+                qrY = areaY + areaH - qrSize;
+            }
+
+            var captionY = Mathf.Max(areaY, qrY - captionH);
+            var contentW = Mathf.Max(0f, qrX - gap - areaX);
+
+            var titleRect = new Rect(areaX, areaY, contentW, titleH);
+            var nextRect = new Rect(areaX, areaY + areaH - nextH, contentW, nextH);
+
+            var midY = areaY + titleH + gap;
+            var midH = Mathf.Max(0f, nextRect.y - gap - midY);
+            var artSize = Mathf.Min(artMax, midH, contentW * 0.38f);
+            var artRect = new Rect(areaX, midY, artSize, artSize);
+            var playersRect = new Rect(
+                areaX + artSize + gap,
+                midY,
+                Mathf.Max(0f, contentW - artSize - gap),
+                Mathf.Max(0f, artSize));
+            var qrCaptionRect = new Rect(qrX, captionY, qrSize, captionH);
+            var qrRect = new Rect(qrX, qrY, qrSize, qrSize);
+
+            return new EventHudLayout(titleRect, artRect, playersRect, nextRect, qrCaptionRect, qrRect);
+        }
+
+        private bool TryGetCurrentSong(
+            out Texture2D cover,
+            out string title,
+            out string artist,
+            out List<string> names)
+        {
+            cover = null;
+            title = null;
+            artist = null;
+            names = null;
 
             if (_currentSet != null && (_phase == "ready" || _phase == "score"))
             {
-                GUILayout.Label(_phase == "score" ? "SCORE" : "READY", _mutedStyle);
-                GUILayout.BeginHorizontal();
-                DrawAlbumArt(_currentCover, artSize);
-                GUILayout.BeginVertical();
-                GUILayout.Label($"{_currentSet.songArtist} — {_currentSet.songName}", _titleStyle);
-                GUILayout.Space(12f);
-                foreach (var player in _currentPlayers)
-                {
-                    GUILayout.Label(
-                        $"{player.name}  ·  {player.instrument}  ·  {player.difficulty}",
-                        _bodyStyle);
-                }
-
-                GUILayout.EndVertical();
-                GUILayout.EndHorizontal();
-                GUILayout.Space(32f);
+                cover = _currentCover;
+                title = _currentSet.songName;
+                artist = _currentSet.songArtist;
+                names = NamesFrom(_currentPlayers?.Select(player => player?.name));
+                return !string.IsNullOrEmpty(title) || !string.IsNullOrEmpty(artist);
             }
 
-            GUILayout.Label("UP NEXT", _mutedStyle);
-            if (!string.IsNullOrEmpty(_preview?.songName))
+            // Idle kiosk: the on-deck preview is the featured current song.
+            if (_preview == null ||
+                (string.IsNullOrEmpty(_preview.songName) && string.IsNullOrEmpty(_preview.songArtist)))
             {
-                GUILayout.BeginHorizontal();
-                DrawAlbumArt(_previewCover, artSize);
-                GUILayout.BeginVertical();
-                GUILayout.Label($"{_preview.songArtist} — {_preview.songName}", _titleStyle);
-                GUILayout.Space(12f);
-                if (_preview.players != null)
-                {
-                    foreach (var player in _preview.players)
-                    {
-                        GUILayout.Label(
-                            $"{player.name}  ·  {player.instrument}  ·  {player.difficulty}",
-                            _bodyStyle);
-                    }
-                }
+                return false;
+            }
 
-                GUILayout.EndVertical();
-                GUILayout.EndHorizontal();
+            cover = _previewCover;
+            title = _preview.songName;
+            artist = _preview.songArtist;
+            names = NamesFrom(_preview.players?.Select(player => player?.name));
+            return true;
+        }
+
+        private bool TryGetNextSong(out string title, out string artist, out List<string> names)
+        {
+            title = null;
+            artist = null;
+            names = null;
+
+            if (_currentSet == null)
+            {
+                return false;
+            }
+
+            if (string.IsNullOrEmpty(_preview?.songName) && string.IsNullOrEmpty(_preview?.songArtist))
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrEmpty(_preview?.setId) && _preview.setId == _currentSet.id)
+            {
+                return false;
+            }
+
+            title = _preview.songName;
+            artist = _preview.songArtist;
+            names = NamesFrom(_preview.players?.Select(player => player?.name));
+            return true;
+        }
+
+        private static List<string> NamesFrom(IEnumerable<string> names)
+        {
+            return names?.Where(name => !string.IsNullOrEmpty(name)).ToList() ?? new List<string>();
+        }
+
+        private static string FormatSongLine(string title, string artist)
+        {
+            if (string.IsNullOrEmpty(title)) return artist ?? string.Empty;
+            if (string.IsNullOrEmpty(artist)) return title;
+            return $"{title} — {artist}";
+        }
+
+        private void DrawCurrentHeader(Rect titleRect)
+        {
+            GUILayout.BeginArea(titleRect);
+            if (TryGetCurrentSong(out _, out var title, out var artist, out _))
+            {
+                GUILayout.Label(FormatSongLine(title, artist), _titleStyle);
             }
             else
             {
                 GUILayout.Label("Waiting for the next group…", _bodyStyle);
             }
 
-            GUILayout.FlexibleSpace();
-            if (EventMode.Flags.hotMic)
-            {
-                GUILayout.Label("Mics stay hot for host announcements.", _mutedStyle);
-            }
-
-            GUILayout.Label($"Bridge: {EventMode.YaqWebSocketUrl}", _mutedStyle);
             GUILayout.EndArea();
         }
 
-        private static void DrawAlbumArt(Texture2D texture, float size)
+        private static void DrawAlbumArt(Rect rect, Texture2D texture)
         {
-            var rect = GUILayoutUtility.GetRect(size, size, GUILayout.Width(size), GUILayout.Height(size));
+            if (rect.width < 8f || rect.height < 8f) return;
+
             if (texture != null)
             {
                 // Album textures are loaded flipped for RawImage; flip for OnGUI too.
@@ -304,31 +442,115 @@ namespace YARG.YAQ
             {
                 GUI.Box(rect, GUIContent.none);
             }
+        }
 
-            GUILayout.Space(24f);
+        private void DrawPlayerGrid(Rect rect, List<string> names)
+        {
+            if (names == null || names.Count == 0 || rect.width < 8f) return;
+
+            GUILayout.BeginArea(rect);
+            var leftCount = names.Count <= 1 ? names.Count : (names.Count + 1) / 2;
+            GUILayout.BeginHorizontal();
+            GUILayout.BeginVertical();
+            for (var i = 0; i < leftCount; i++)
+            {
+                GUILayout.Label(names[i], _bodyStyle);
+            }
+
+            GUILayout.EndVertical();
+            if (leftCount < names.Count)
+            {
+                GUILayout.Space(32f);
+                GUILayout.BeginVertical();
+                for (var i = leftCount; i < names.Count; i++)
+                {
+                    GUILayout.Label(names[i], _bodyStyle);
+                }
+
+                GUILayout.EndVertical();
+            }
+
+            GUILayout.EndHorizontal();
+            GUILayout.EndArea();
+        }
+
+        private void DrawJoinQr(Rect captionRect, Rect qrRect)
+        {
+            GUI.Label(captionRect, "SCAN TO JOIN", _qrCaptionStyle);
+            if (_qrTexture != null)
+            {
+                GUI.DrawTexture(qrRect, _qrTexture, ScaleMode.ScaleToFit);
+            }
+            else
+            {
+                GUI.Box(qrRect, GUIContent.none);
+            }
+        }
+
+        private void DrawNextSong(Rect nextRect)
+        {
+            GUILayout.BeginArea(nextRect);
+            if (TryGetNextSong(out var title, out var artist, out var names))
+            {
+                GUILayout.Label(FormatSongLine(title, artist), _nextTitleStyle);
+                if (names.Count > 0)
+                {
+                    GUILayout.Label(string.Join("  ", names), _nextPlayersStyle);
+                }
+            }
+
+            GUILayout.EndArea();
         }
 
         private void EnsureStyles()
         {
-            if (_titleStyle != null) return;
-            _titleStyle = new GUIStyle(GUI.skin.label)
+            if (_titleStyle == null)
             {
-                fontSize = 42,
+                _titleStyle = new GUIStyle(GUI.skin.label)
+                {
+                    fontSize = 42,
+                    fontStyle = FontStyle.Bold,
+                    normal = { textColor = Color.white },
+                    wordWrap = true,
+                    clipping = TextClipping.Clip
+                };
+                _bodyStyle = new GUIStyle(GUI.skin.label)
+                {
+                    fontSize = 28,
+                    normal = { textColor = new Color(0.9f, 0.95f, 1f) },
+                    wordWrap = true,
+                    clipping = TextClipping.Clip
+                };
+                _mutedStyle = new GUIStyle(GUI.skin.label)
+                {
+                    fontSize = 18,
+                    normal = { textColor = new Color(0.65f, 0.75f, 0.8f) },
+                    wordWrap = true,
+                    clipping = TextClipping.Clip
+                };
+                _qrCaptionStyle = new GUIStyle(_mutedStyle)
+                {
+                    alignment = TextAnchor.MiddleCenter,
+                    wordWrap = false,
+                    clipping = TextClipping.Clip
+                };
+            }
+
+            if (_nextTitleStyle != null) return;
+            _nextTitleStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 32,
                 fontStyle = FontStyle.Bold,
                 normal = { textColor = Color.white },
-                wordWrap = true
+                wordWrap = true,
+                clipping = TextClipping.Clip
             };
-            _bodyStyle = new GUIStyle(GUI.skin.label)
+            _nextPlayersStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 28,
-                normal = { textColor = new Color(0.9f, 0.95f, 1f) },
-                wordWrap = true
-            };
-            _mutedStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 18,
-                normal = { textColor = new Color(0.65f, 0.75f, 0.8f) },
-                wordWrap = true
+                fontSize = 22,
+                normal = { textColor = new Color(0.85f, 0.9f, 0.95f) },
+                wordWrap = true,
+                clipping = TextClipping.Clip
             };
         }
 
@@ -386,6 +608,7 @@ namespace YARG.YAQ
             EventMode.Flags.CopyFrom(flags ?? EventFlags.Defaults);
             ApplyMainMenuVisibility();
             EnsureHotMics();
+            SyncTestBots(GlobalVariables.State.CurrentSong);
             _bridge?.Send(new
             {
                 type = "settings.ack",
@@ -394,15 +617,17 @@ namespace YARG.YAQ
                     EventMode.Flags.hotMic,
                     EventMode.Flags.showUpNextHud,
                     EventMode.Flags.skipMainMenu,
-                    EventMode.Flags.openDifficultySelect
+                    EventMode.Flags.openDifficultySelect,
+                    EventMode.Flags.addTestBots
                 }
             });
             YargLogger.LogFormatInfo(
-                "YAQ event flags applied (hotMic={0}, hud={1}, skipMenu={2}, difficulty={3})",
+                "YAQ event flags applied (hotMic={0}, hud={1}, skipMenu={2}, difficulty={3}, testBots={4})",
                 EventMode.Flags.hotMic,
                 EventMode.Flags.showUpNextHud,
                 EventMode.Flags.skipMainMenu,
-                EventMode.Flags.openDifficultySelect);
+                EventMode.Flags.openDifficultySelect,
+                EventMode.Flags.addTestBots);
         }
 
         private void ReportFlags()
@@ -415,7 +640,8 @@ namespace YARG.YAQ
                     EventMode.Flags.hotMic,
                     EventMode.Flags.showUpNextHud,
                     EventMode.Flags.skipMainMenu,
-                    EventMode.Flags.openDifficultySelect
+                    EventMode.Flags.openDifficultySelect,
+                    EventMode.Flags.addTestBots
                 }
             });
         }
@@ -441,7 +667,9 @@ namespace YARG.YAQ
             }
 
             var song = songs[0];
+            RemoveTestBots();
             ApplyPlayers(players);
+            SyncTestBots(song);
 
             GlobalVariables.State.CurrentSong = song;
             GlobalVariables.State.ShowSongs.Clear();
@@ -530,6 +758,139 @@ namespace YARG.YAQ
                 existing.Profile.CurrentDifficulty = ParseDifficulty(request.difficulty);
                 existing.Profile.DifficultyFallback = existing.Profile.CurrentDifficulty;
             }
+        }
+
+        private const string TestBotPrefix = "YAQ Bot ";
+
+        private static readonly (Instrument instrument, string label)[] TestBotParts =
+        {
+            (Instrument.FiveFretGuitar, "Guitar"),
+            (Instrument.FiveFretBass, "Bass"),
+            (Instrument.FourLaneDrums, "Drums"),
+            (Instrument.Vocals, "Vocals"),
+        };
+
+        private void SyncTestBots(SongEntry song)
+        {
+            RemoveTestBots();
+            if (EventMode.Flags.addTestBots)
+            {
+                AddTestBots(song);
+            }
+        }
+
+        private void RemoveTestBots()
+        {
+            foreach (var player in PlayerContainer.Players.ToList())
+            {
+                if (!IsTestBot(player.Profile)) continue;
+                var profile = player.Profile;
+                PlayerContainer.DisposePlayer(player);
+                PlayerContainer.RemoveProfile(profile);
+            }
+
+            foreach (var profile in PlayerContainer.Profiles.ToList())
+            {
+                if (IsTestBot(profile))
+                {
+                    PlayerContainer.RemoveProfile(profile);
+                }
+            }
+        }
+
+        private void AddTestBots(SongEntry song)
+        {
+            var humans = PlayerContainer.Players
+                .Where(player => !IsTestBot(player.Profile))
+                .Select(player => player.Profile.CurrentInstrument)
+                .ToList();
+
+            foreach (var (instrument, label) in TestBotParts)
+            {
+                if (humans.Any(human => OccupiesTestPart(human, instrument))) continue;
+                if (!SongHasTestPart(song, instrument)) continue;
+
+                var name = TestBotPrefix + label;
+                var profile = PlayerContainer.Profiles.FirstOrDefault(p => p.Name == name && p.IsBot)
+                    ?? new YargProfile
+                    {
+                        Name = name,
+                        IsBot = true,
+                        NoteSpeed = 5,
+                        HighwayLength = 1,
+                        CurrentInstrument = instrument,
+                        PreferredInstrument = instrument,
+                        CurrentDifficulty = Difficulty.Expert,
+                        DifficultyFallback = Difficulty.Expert,
+                        GameMode = instrument.ToNativeGameMode(),
+                    };
+
+                profile.CurrentInstrument = instrument;
+                profile.PreferredInstrument = instrument;
+                profile.CurrentDifficulty = Difficulty.Expert;
+                profile.DifficultyFallback = Difficulty.Expert;
+                profile.GameMode = instrument.ToNativeGameMode();
+                profile.IsBot = true;
+
+                if (!PlayerContainer.Profiles.Contains(profile))
+                {
+                    PlayerContainer.AddProfile(profile);
+                }
+
+                if (!PlayerContainer.IsProfileTaken(profile))
+                {
+                    PlayerContainer.CreatePlayerFromProfile(profile, true);
+                }
+            }
+        }
+
+        private static bool SongHasTestPart(SongEntry song, Instrument instrument)
+        {
+            if (song == null) return true;
+            try
+            {
+                if (song.HasInstrument(instrument)) return true;
+                return instrument switch
+                {
+                    Instrument.Vocals => song.HasInstrument(Instrument.Harmony),
+                    Instrument.FourLaneDrums =>
+                        song.HasInstrument(Instrument.ProDrums) ||
+                        song.HasInstrument(Instrument.FiveLaneDrums) ||
+                        song.HasInstrument(Instrument.EliteDrums),
+                    _ => false
+                };
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool OccupiesTestPart(Instrument playerInstrument, Instrument botPart)
+        {
+            return botPart switch
+            {
+                Instrument.FiveFretGuitar => playerInstrument is
+                    Instrument.FiveFretGuitar or Instrument.SixFretGuitar or
+                    Instrument.FiveFretRhythm or Instrument.FiveFretCoopGuitar or
+                    Instrument.SixFretRhythm or Instrument.SixFretCoopGuitar or
+                    Instrument.ProGuitar_17Fret or Instrument.ProGuitar_22Fret,
+                Instrument.FiveFretBass => playerInstrument is
+                    Instrument.FiveFretBass or Instrument.SixFretBass or
+                    Instrument.ProBass_17Fret or Instrument.ProBass_22Fret,
+                Instrument.FourLaneDrums => playerInstrument is
+                    Instrument.FourLaneDrums or Instrument.FiveLaneDrums or
+                    Instrument.ProDrums or Instrument.EliteDrums,
+                Instrument.Vocals => playerInstrument is Instrument.Vocals or Instrument.Harmony,
+                _ => playerInstrument == botPart
+            };
+        }
+
+        private static bool IsTestBot(YargProfile profile)
+        {
+            return profile != null && profile.IsBot &&
+                   !string.IsNullOrEmpty(profile.Name) &&
+                   profile.Name.StartsWith(TestBotPrefix);
         }
 
         private static Instrument ParseInstrument(string value)
@@ -765,6 +1126,93 @@ namespace YARG.YAQ
             _coverLoadGeneration++;
             ClearCover(false);
             ClearCover(true);
+        }
+
+        private void RequestQr()
+        {
+            var generation = ++_qrLoadGeneration;
+            LoadQrAsync(generation).Forget();
+        }
+
+        private async UniTaskVoid LoadQrAsync(int generation)
+        {
+            string json = null;
+            try
+            {
+                var apiUrl = QrApiUrlFromBridge(EventMode.YaqWebSocketUrl);
+                json = await UniTask.RunOnThreadPool(() =>
+                {
+                    using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                    return client.GetStringAsync(apiUrl).GetAwaiter().GetResult();
+                });
+            }
+            catch (Exception ex)
+            {
+                YargLogger.LogFormatWarning("YAQ QR fetch failed: {0}", ex.Message);
+            }
+
+            Enqueue(() =>
+            {
+                if (generation != _qrLoadGeneration) return;
+                ApplyQrPayload(json);
+            });
+        }
+
+        private void ApplyQrPayload(string json)
+        {
+            if (string.IsNullOrEmpty(json)) return;
+
+            try
+            {
+                var obj = JObject.Parse(json);
+                var joinUrl = obj.Value<string>("url");
+                var dataUrl = obj.Value<string>("dataUrl");
+                if (string.IsNullOrEmpty(dataUrl)) return;
+
+                var comma = dataUrl.IndexOf(',');
+                var b64 = comma >= 0 ? dataUrl.Substring(comma + 1) : dataUrl;
+                var bytes = Convert.FromBase64String(b64);
+
+                var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                if (!texture.LoadImage(bytes))
+                {
+                    Destroy(texture);
+                    return;
+                }
+
+                ClearQrTexture();
+                _qrTexture = texture;
+                _qrJoinUrl = joinUrl;
+            }
+            catch (Exception ex)
+            {
+                YargLogger.LogFormatWarning("YAQ QR decode failed: {0}", ex.Message);
+            }
+        }
+
+        private void ClearQr()
+        {
+            _qrLoadGeneration++;
+            _qrJoinUrl = null;
+            ClearQrTexture();
+        }
+
+        private void ClearQrTexture()
+        {
+            if (_qrTexture == null) return;
+            Destroy(_qrTexture);
+            _qrTexture = null;
+        }
+
+        internal static string QrApiUrlFromBridge(string wsUrl)
+        {
+            if (Uri.TryCreate(wsUrl, UriKind.Absolute, out var uri))
+            {
+                var scheme = uri.Scheme == "wss" ? "https" : "http";
+                return $"{scheme}://{uri.Authority}/api/qr";
+            }
+
+            return "http://127.0.0.1:3000/api/qr";
         }
 
         private void ApplyMainMenuVisibility()
