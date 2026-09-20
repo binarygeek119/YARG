@@ -47,6 +47,7 @@ namespace YARG.YAQ
         private GUIStyle _nextTitleStyle;
         private GUIStyle _nextPlayersStyle;
         private GUIStyle _avatarInitialStyle;
+        private GUIStyle _playerNameStyle;
         private readonly ConcurrentQueue<Action> _mainThread = new();
 
         private Texture2D _currentCover;
@@ -63,6 +64,7 @@ namespace YARG.YAQ
 
         private readonly Dictionary<string, Texture2D> _playerImages = new();
         private readonly HashSet<string> _playerImageLoading = new();
+        private readonly HashSet<string> _playerImageMisses = new();
         private int _playerImageGeneration;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -550,52 +552,36 @@ namespace YARG.YAQ
         {
             if (players == null || players.Count == 0 || rect.width < 8f) return;
 
-            const float avatarSize = 52f;
-            GUILayout.BeginArea(rect);
-            var leftCount = players.Count <= 1 ? players.Count : (players.Count + 1) / 2;
-            GUILayout.BeginHorizontal();
-            GUILayout.BeginVertical();
-            for (var i = 0; i < leftCount; i++)
+            const float avatarSize = 56f;
+            const float nameGap = 14f;
+            const float rowGap = 14f;
+            const float colGap = 36f;
+            var rowHeight = avatarSize + rowGap;
+            var columns = players.Count <= 1 ? 1 : 2;
+            var leftCount = columns == 1 ? players.Count : (players.Count + 1) / 2;
+            var colWidth = columns == 1 ? rect.width : (rect.width - colGap) / 2f;
+
+            for (var i = 0; i < players.Count; i++)
             {
-                DrawPlayerRow(players[i], avatarSize, _bodyStyle);
+                var column = i < leftCount ? 0 : 1;
+                var row = i < leftCount ? i : i - leftCount;
+                var x = rect.x + column * (colWidth + colGap);
+                var y = rect.y + row * rowHeight;
+                var avatarRect = new Rect(x, y, avatarSize, avatarSize);
+                var nameRect = new Rect(
+                    x + avatarSize + nameGap,
+                    y,
+                    Mathf.Max(8f, colWidth - avatarSize - nameGap),
+                    avatarSize);
+
+                DrawPlayerAvatar(avatarRect, players[i]);
+                GUI.Label(nameRect, players[i].Name, _playerNameStyle);
             }
-
-            GUILayout.EndVertical();
-            if (leftCount < players.Count)
-            {
-                GUILayout.Space(32f);
-                GUILayout.BeginVertical();
-                for (var i = leftCount; i < players.Count; i++)
-                {
-                    DrawPlayerRow(players[i], avatarSize, _bodyStyle);
-                }
-
-                GUILayout.EndVertical();
-            }
-
-            GUILayout.EndHorizontal();
-            GUILayout.EndArea();
-        }
-
-        private void DrawPlayerRow(HudPlayer player, float avatarSize, GUIStyle nameStyle)
-        {
-            GUILayout.BeginHorizontal(GUILayout.Height(avatarSize));
-            var avatarRect = GUILayoutUtility.GetRect(
-                avatarSize, avatarSize, GUILayout.Width(avatarSize), GUILayout.Height(avatarSize));
-            DrawPlayerAvatar(avatarRect, player);
-            GUILayout.Space(12f);
-            GUILayout.BeginVertical();
-            GUILayout.FlexibleSpace();
-            GUILayout.Label(player.Name, nameStyle);
-            GUILayout.FlexibleSpace();
-            GUILayout.EndVertical();
-            GUILayout.EndHorizontal();
-            GUILayout.Space(10f);
         }
 
         private void DrawPlayerAvatar(Rect rect, HudPlayer player)
         {
-            if (rect.width < 4f || rect.height < 4f) return;
+            if (rect.width < 1f || rect.height < 1f) return;
 
             if (TryGetPlayerTexture(player, out var texture))
             {
@@ -626,27 +612,29 @@ namespace YARG.YAQ
 
         private void DrawNextSong(Rect nextRect)
         {
-            GUILayout.BeginArea(nextRect);
-            if (TryGetNextSong(out var title, out var artist, out var players))
+            if (!TryGetNextSong(out var title, out var artist, out var players)) return;
+
+            EnsurePlayerImages(players);
+            const float titleH = 36f;
+            const float avatarSize = 32f;
+            const float nameGap = 8f;
+            const float nameWidth = 160f;
+            GUI.Label(
+                new Rect(nextRect.x, nextRect.y, nextRect.width, titleH),
+                FormatSongLine(title, artist),
+                _nextTitleStyle);
+
+            var x = nextRect.x;
+            var y = nextRect.y + titleH + 6f;
+            foreach (var player in players)
             {
-                EnsurePlayerImages(players);
-                GUILayout.Label(FormatSongLine(title, artist), _nextTitleStyle);
-                if (players.Count > 0)
-                {
-                    GUILayout.Space(6f);
-                    GUILayout.BeginHorizontal();
-                    foreach (var player in players)
-                    {
-                        DrawPlayerRow(player, 28f, _nextPlayersStyle);
-                        GUILayout.Space(16f);
-                    }
-
-                    GUILayout.FlexibleSpace();
-                    GUILayout.EndHorizontal();
-                }
+                DrawPlayerAvatar(new Rect(x, y, avatarSize, avatarSize), player);
+                GUI.Label(
+                    new Rect(x + avatarSize + nameGap, y, nameWidth, avatarSize),
+                    player.Name,
+                    _nextPlayersStyle);
+                x += avatarSize + nameGap + nameWidth + 20f;
             }
-
-            GUILayout.EndArea();
         }
 
         private void EnsureStyles()
@@ -688,6 +676,12 @@ namespace YARG.YAQ
                     alignment = TextAnchor.MiddleCenter,
                     normal = { textColor = Color.white }
                 };
+                _playerNameStyle = new GUIStyle(_bodyStyle)
+                {
+                    alignment = TextAnchor.MiddleLeft,
+                    wordWrap = false,
+                    clipping = TextClipping.Clip
+                };
             }
 
             if (_nextTitleStyle != null) return;
@@ -702,8 +696,9 @@ namespace YARG.YAQ
             _nextPlayersStyle = new GUIStyle(GUI.skin.label)
             {
                 fontSize = 22,
+                alignment = TextAnchor.MiddleLeft,
                 normal = { textColor = new Color(0.85f, 0.9f, 0.95f) },
-                wordWrap = true,
+                wordWrap = false,
                 clipping = TextClipping.Clip
             };
         }
@@ -1432,9 +1427,16 @@ namespace YARG.YAQ
             foreach (var player in players)
             {
                 if (TryGetPlayerTexture(player, out _)) continue;
-                if (string.IsNullOrEmpty(player.HttpUrl) || !YaqPlayerMedia.IsHttpUrl(player.HttpUrl)) continue;
-                if (!_playerImageLoading.Add(player.HttpUrl)) continue;
-                LoadPlayerImageAsync(player, player.HttpUrl, _playerImageGeneration).Forget();
+
+                foreach (var url in YaqPlayerMedia.ImageUrlsToTry(
+                             EventMode.YaqWebSocketUrl, player.HttpUrl, player.Id, player.Name))
+                {
+                    if (!YaqPlayerMedia.IsHttpUrl(url)) continue;
+                    if (_playerImageMisses.Contains(url)) continue;
+                    if (!_playerImageLoading.Add(url)) break;
+                    LoadPlayerImageAsync(player, url, _playerImageGeneration).Forget();
+                    break;
+                }
             }
         }
 
@@ -1593,7 +1595,14 @@ namespace YARG.YAQ
                     return;
                 }
 
-                RememberPlayerTexture(player.Id, player.Name, TextureFromImageBytes(bytes));
+                var texture = TextureFromImageBytes(bytes);
+                if (texture == null)
+                {
+                    _playerImageMisses.Add(imageKey);
+                    return;
+                }
+
+                RememberPlayerTexture(player.Id, player.Name, texture);
             });
         }
 
@@ -1641,6 +1650,7 @@ namespace YARG.YAQ
         {
             _playerImageGeneration++;
             _playerImageLoading.Clear();
+            _playerImageMisses.Clear();
             foreach (var texture in _playerImages.Values.Distinct())
             {
                 if (texture != null) Destroy(texture);

@@ -331,6 +331,36 @@ namespace YARG.YAQ
             return origin + "/" + imageRef;
         }
 
+        public static List<string> ImageUrlsToTry(string wsUrl, string explicitUrl, string id, string name)
+        {
+            var urls = new List<string>();
+            void Add(string url)
+            {
+                if (string.IsNullOrEmpty(url) || urls.Contains(url)) return;
+                urls.Add(url);
+            }
+
+            Add(explicitUrl);
+
+            var origin = HttpOriginFromBridge(wsUrl);
+            if (!string.IsNullOrEmpty(id))
+            {
+                var enc = Uri.EscapeDataString(id);
+                Add($"{origin}/api/players/{enc}/image");
+                Add($"{origin}/api/players/{enc}/avatar");
+                Add($"{origin}/api/avatars/{enc}");
+            }
+
+            if (!string.IsNullOrEmpty(name))
+            {
+                var enc = Uri.EscapeDataString(name.Trim());
+                Add($"{origin}/api/players/{enc}/image");
+                Add($"{origin}/api/avatars/{enc}");
+            }
+
+            return urls;
+        }
+
         public static string HttpOriginFromBridge(string wsUrl)
         {
             if (Uri.TryCreate(wsUrl, UriKind.Absolute, out var uri))
