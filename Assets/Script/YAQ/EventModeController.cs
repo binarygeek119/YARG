@@ -57,6 +57,7 @@ namespace YARG.YAQ
         private string _qrJoinUrl;
         private int _qrLoadGeneration;
         private float _nextQrRetryAt;
+        private Coroutine _openReadyCoroutine;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Bootstrap()
@@ -150,7 +151,9 @@ namespace YARG.YAQ
             _status = "YAQ stream off";
             ClearCovers();
             ClearQr();
-            ApplyMainMenuVisibility();
+            StopOpenReadyWhenPossible();
+            RemoveTestBots();
+            ApplyMainMenuVisibility(restoreStack: true);
         }
 
         /// <summary>
@@ -183,7 +186,9 @@ namespace YARG.YAQ
             _phase = "idle";
             _status = "Event Mode off (bridge still connected)";
             ClearCovers();
-            ApplyMainMenuVisibility();
+            StopOpenReadyWhenPossible();
+            RemoveTestBots();
+            ApplyMainMenuVisibility(restoreStack: true);
             ReportEventModeState();
             YargLogger.LogInfo("YAQ exited Event Mode (bridge remains connected)");
         }
@@ -722,7 +727,7 @@ namespace YARG.YAQ
 
             if (EventMode.Flags.openDifficultySelect)
             {
-                StartCoroutine(OpenReadyWhenPossible());
+                StartOpenReadyWhenPossible();
             }
 
             SendState("ready");
@@ -733,21 +738,43 @@ namespace YARG.YAQ
         {
             if (!EventMode.Flags.openDifficultySelect) return;
             if (_currentSet == null) return;
-            StartCoroutine(OpenReadyWhenPossible());
+            StartOpenReadyWhenPossible();
+        }
+
+        private void StartOpenReadyWhenPossible()
+        {
+            StopOpenReadyWhenPossible();
+            _openReadyCoroutine = StartCoroutine(OpenReadyWhenPossible());
+        }
+
+        private void StopOpenReadyWhenPossible()
+        {
+            if (_openReadyCoroutine == null) return;
+            StopCoroutine(_openReadyCoroutine);
+            _openReadyCoroutine = null;
         }
 
         private System.Collections.IEnumerator OpenReadyWhenPossible()
         {
             for (var i = 0; i < 180; i++)
             {
+                if (!EventMode.IsActive || !EventMode.Flags.openDifficultySelect || _currentSet == null)
+                {
+                    _openReadyCoroutine = null;
+                    yield break;
+                }
+
                 if (MenuManager.Instance != null)
                 {
                     MenuManager.Instance.PushMenu(MenuManager.Menu.DifficultySelect);
+                    _openReadyCoroutine = null;
                     yield break;
                 }
 
                 yield return null;
             }
+
+            _openReadyCoroutine = null;
         }
 
         private void ApplyPlayers(List<YaqSetPlayer> players)
@@ -1281,13 +1308,65 @@ namespace YARG.YAQ
             return "http://127.0.0.1:3000/api/qr";
         }
 
-        private void ApplyMainMenuVisibility()
+        private void ApplyMainMenuVisibility(bool restoreStack = false)
+        {
+            var hide = EventMode.IsActive && EventMode.Flags.skipMainMenu;
+            var menuManager = MenuManager.Instance;
+
+            if (hide)
+            {
+                if (menuManager != null)
+                {
+                    menuManager.SetMenuActive(MenuManager.Menu.MainMenu, false);
+                }
+                else
+                {
+                    SetMainMenuActive(false);
+                }
+
+                return;
+            }
+
+            // Score screen lives outside the MenuManager stack. Leave it alone;
+            // the next Menu scene load will push a clean Main Menu.
+            if (IsScoreScreenShowing())
+            {
+                return;
+            }
+
+            if (restoreStack && menuManager != null)
+            {
+                menuManager.RestoreToMainMenu();
+                return;
+            }
+
+            // Flag-only unhide must not force Main Menu over Difficulty Select / Profiles.
+            if (menuManager != null)
+            {
+                if (menuManager.CurrentMenu == MenuManager.Menu.MainMenu)
+                {
+                    menuManager.SetMenuActive(MenuManager.Menu.MainMenu, true);
+                }
+
+                return;
+            }
+
+            SetMainMenuActive(true);
+        }
+
+        private static bool IsScoreScreenShowing()
+        {
+            var scoreScreen = FindFirstObjectByType<ScoreScreenMenu>();
+            return scoreScreen != null && scoreScreen.gameObject.activeInHierarchy;
+        }
+
+        private static void SetMainMenuActive(bool active)
         {
             var mainMenu = FindFirstObjectByType<MainMenu>(FindObjectsInactive.Include);
-            if (mainMenu == null) return;
-
-            var hide = EventMode.IsActive && EventMode.Flags.skipMainMenu;
-            mainMenu.gameObject.SetActive(!hide);
+            if (mainMenu != null)
+            {
+                mainMenu.gameObject.SetActive(active);
+            }
         }
 
         private void EnsureHotMics()

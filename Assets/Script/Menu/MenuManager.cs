@@ -41,6 +41,11 @@ namespace YARG.Menu
         private readonly Stack<Menu> _openMenus = new();
         private Coroutine _reactivateCoroutine;
 
+        /// <summary>
+        /// The menu currently at the top of the stack, or <see cref="Menu.None"/> if empty.
+        /// </summary>
+        public Menu CurrentMenu => _openMenus.TryPeek(out var menu) ? menu : Menu.None;
+
         protected override void SingletonAwake()
         {
             // Convert to dictionary with "Menu" as key
@@ -140,6 +145,50 @@ namespace YARG.Menu
             if (_openMenus.TryPeek(out var currentMenuEnum) && _menus.TryGetValue(currentMenuEnum, out var currentMenu))
             {
                 currentMenu.gameObject.SetActive(false);
+            }
+        }
+
+        public void SetMenuActive(Menu menu, bool active)
+        {
+            if (_menus != null && _menus.TryGetValue(menu, out var obj) && obj != null)
+            {
+                obj.gameObject.SetActive(active);
+            }
+        }
+
+        /// <summary>
+        /// Collapse the stack to Main Menu and show only that menu.
+        /// Event Mode hides Main Menu while leaving Difficulty Select (and others)
+        /// on the stack; forcing Main Menu visible without popping means the next
+        /// PushMenu only hides the top entry, so Main Menu stays composited over Profiles.
+        /// </summary>
+        public void RestoreToMainMenu()
+        {
+            if (_menus == null || _openMenus.Count == 0)
+            {
+                return;
+            }
+
+            if (_reactivateCoroutine != null)
+            {
+                StopCoroutine(_reactivateCoroutine);
+                _reactivateCoroutine = null;
+            }
+
+            foreach (var menu in _openMenus)
+            {
+                if (_menus.TryGetValue(menu, out var obj) && obj != null)
+                {
+                    obj.gameObject.SetActive(false);
+                }
+            }
+
+            _openMenus.Clear();
+            _openMenus.Push(Menu.MainMenu);
+
+            if (_menus.TryGetValue(Menu.MainMenu, out var main) && main != null)
+            {
+                main.gameObject.SetActive(true);
             }
         }
 
