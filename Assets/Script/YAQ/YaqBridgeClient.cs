@@ -135,9 +135,18 @@ namespace YARG.YAQ
     [Serializable]
     public class YaqPreviewPlayer
     {
+        public string id;
         public string name;
         public string instrument;
         public string difficulty;
+        public string imageUrl;
+        public string avatarUrl;
+        public string photoUrl;
+        public string profileImage;
+        public string profileImageUrl;
+
+        [JsonExtensionData]
+        public IDictionary<string, JToken> Extra;
     }
 
     [Serializable]
@@ -148,6 +157,114 @@ namespace YARG.YAQ
         public string songHash;
         public string instrument;
         public string difficulty;
+        public string imageUrl;
+        public string avatarUrl;
+        public string photoUrl;
+        public string profileImage;
+        public string profileImageUrl;
+
+        [JsonExtensionData]
+        public IDictionary<string, JToken> Extra;
+    }
+
+    internal static class YaqPlayerMedia
+    {
+        private static readonly string[] ExtraKeys =
+        {
+            "imageUrl", "image_url", "avatarUrl", "avatar_url",
+            "photoUrl", "photo_url", "profileImage", "profileImageUrl",
+            "profile_image", "profile_image_url", "pictureUrl", "picture_url",
+            "dataUrl", "data_url", "image", "avatar", "picture", "photo"
+        };
+
+        public static string ExtractImageRef(
+            string id,
+            IEnumerable<string> known,
+            IDictionary<string, JToken> extra)
+        {
+            if (known != null)
+            {
+                foreach (var value in known)
+                {
+                    var resolved = NormalizeRef(value);
+                    if (resolved != null) return resolved;
+                }
+            }
+
+            if (extra != null)
+            {
+                foreach (var key in ExtraKeys)
+                {
+                    if (!TryGetExtra(extra, key, out var token)) continue;
+                    var resolved = NormalizeToken(token);
+                    if (resolved != null) return resolved;
+                }
+            }
+
+            return string.IsNullOrEmpty(id) ? null : $"/api/players/{Uri.EscapeDataString(id)}/image";
+        }
+
+        private static bool TryGetExtra(
+            IDictionary<string, JToken> extra,
+            string key,
+            out JToken token)
+        {
+            if (extra.TryGetValue(key, out token)) return true;
+            foreach (var pair in extra)
+            {
+                if (string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase))
+                {
+                    token = pair.Value;
+                    return true;
+                }
+            }
+
+            token = null;
+            return false;
+        }
+
+        public static string ToAbsoluteUrl(string wsUrl, string imageRef)
+        {
+            if (string.IsNullOrEmpty(imageRef)) return null;
+            if (imageRef.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) return imageRef;
+            if (Uri.TryCreate(imageRef, UriKind.Absolute, out _)) return imageRef;
+
+            var origin = HttpOriginFromBridge(wsUrl);
+            if (imageRef.StartsWith("/")) return origin + imageRef;
+            return origin + "/" + imageRef;
+        }
+
+        public static string HttpOriginFromBridge(string wsUrl)
+        {
+            if (Uri.TryCreate(wsUrl, UriKind.Absolute, out var uri))
+            {
+                var scheme = uri.Scheme == "wss" ? "https" : "http";
+                return $"{scheme}://{uri.Authority}";
+            }
+
+            return "http://127.0.0.1:3000";
+        }
+
+        private static string NormalizeToken(JToken token)
+        {
+            if (token == null || token.Type == JTokenType.Null) return null;
+            if (token.Type == JTokenType.String) return NormalizeRef(token.Value<string>());
+            if (token is JObject obj)
+            {
+                return NormalizeRef(obj.Value<string>("dataUrl"))
+                    ?? NormalizeRef(obj.Value<string>("data_url"))
+                    ?? NormalizeRef(obj.Value<string>("url"))
+                    ?? NormalizeRef(obj.Value<string>("src"))
+                    ?? NormalizeRef(obj.Value<string>("href"));
+            }
+
+            return null;
+        }
+
+        private static string NormalizeRef(string value)
+        {
+            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        }
     }
 
     [Serializable]
