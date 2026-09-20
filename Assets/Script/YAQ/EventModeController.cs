@@ -389,13 +389,17 @@ namespace YARG.YAQ
 
         internal readonly struct HudPlayer
         {
+            public readonly string Id;
             public readonly string Name;
-            public readonly string ImageKey;
+            public readonly string CacheKey;
+            public readonly string HttpUrl;
 
-            public HudPlayer(string name, string imageKey)
+            public HudPlayer(string id, string name, string cacheKey, string httpUrl)
             {
+                Id = id;
                 Name = name;
-                ImageKey = imageKey;
+                CacheKey = cacheKey;
+                HttpUrl = httpUrl;
             }
         }
 
@@ -466,16 +470,8 @@ namespace YARG.YAQ
             if (source == null) return players;
             foreach (var player in source)
             {
-                if (player == null || string.IsNullOrEmpty(player.name)) continue;
-                players.Add(ToHudPlayer(
-                    player.name,
-                    player.id,
-                    new[]
-                    {
-                        player.imageUrl, player.avatarUrl, player.photoUrl,
-                        player.profileImageUrl, player.profileImage
-                    },
-                    player.Extra));
+                var hud = ToHudPlayer(player?.name, player?.id, YaqPlayerMedia.KnownImageFields(player), player?.Extra);
+                if (hud.HasValue) players.Add(hud.Value);
             }
 
             return players;
@@ -487,30 +483,30 @@ namespace YARG.YAQ
             if (source == null) return players;
             foreach (var player in source)
             {
-                if (player == null || string.IsNullOrEmpty(player.name)) continue;
-                players.Add(ToHudPlayer(
-                    player.name,
-                    player.id,
-                    new[]
-                    {
-                        player.imageUrl, player.avatarUrl, player.photoUrl,
-                        player.profileImageUrl, player.profileImage
-                    },
-                    player.Extra));
+                var hud = ToHudPlayer(player?.name, player?.id, YaqPlayerMedia.KnownImageFields(player), player?.Extra);
+                if (hud.HasValue) players.Add(hud.Value);
             }
 
             return players;
         }
 
-        private HudPlayer ToHudPlayer(
+        private HudPlayer? ToHudPlayer(
             string name,
             string id,
             IEnumerable<string> imageFields,
             IDictionary<string, JToken> extra)
         {
+            if (string.IsNullOrEmpty(name) && string.IsNullOrEmpty(id)) return null;
+            var displayName = name ?? string.Empty;
             var raw = YaqPlayerMedia.ExtractImageRef(id, imageFields, extra);
-            var key = YaqPlayerMedia.ToAbsoluteUrl(EventMode.YaqWebSocketUrl, raw);
-            return new HudPlayer(name, key);
+            var cacheKey = YaqPlayerMedia.PlayerCacheKey(id, displayName);
+            string httpUrl = null;
+            if (!string.IsNullOrEmpty(raw) && !YaqPlayerMedia.IsInlineImage(raw))
+            {
+                httpUrl = YaqPlayerMedia.ToAbsoluteUrl(EventMode.YaqWebSocketUrl, raw);
+            }
+
+            return new HudPlayer(id, displayName, cacheKey, httpUrl);
         }
 
         private static string FormatSongLine(string title, string artist)
@@ -601,9 +597,7 @@ namespace YARG.YAQ
         {
             if (rect.width < 4f || rect.height < 4f) return;
 
-            if (!string.IsNullOrEmpty(player.ImageKey) &&
-                _playerImages.TryGetValue(player.ImageKey, out var texture) &&
-                texture != null)
+            if (TryGetPlayerTexture(player, out var texture))
             {
                 GUI.DrawTexture(rect, texture, ScaleMode.ScaleAndCrop);
                 return;
@@ -729,6 +723,15 @@ namespace YARG.YAQ
                     if (EventMode.Suspended) break;
                     _preview = msg["preview"]?.ToObject<YaqQueuePreview>() ?? new YaqQueuePreview();
                     RequestCover(true, _preview?.songHash);
+                    ApplyStreamPlayerImages(_preview?.players);
+                    break;
+                case "player.image":
+                case "profile.image":
+                    ApplyPlayerImageMessage(msg);
+                    break;
+                case "player.images":
+                case "profile.images":
+                    ApplyPlayerImageList(msg);
                     break;
                 case "set.prepare":
                     if (EventMode.Suspended)
@@ -830,6 +833,7 @@ namespace YARG.YAQ
             RemoveTestBots();
             ApplyPlayers(players);
             SyncTestBots(song);
+            ApplyStreamPlayerImages(players);
 
             GlobalVariables.State.CurrentSong = song;
             GlobalVariables.State.ShowSongs.Clear();
@@ -1427,24 +1431,149 @@ namespace YARG.YAQ
 
             foreach (var player in players)
             {
-                if (string.IsNullOrEmpty(player.ImageKey)) continue;
-                if (_playerImages.ContainsKey(player.ImageKey)) continue;
-                if (!_playerImageLoading.Add(player.ImageKey)) continue;
-                LoadPlayerImageAsync(player.ImageKey, _playerImageGeneration).Forget();
+                if (TryGetPlayerTexture(player, out _)) continue;
+                if (string.IsNullOrEmpty(player.HttpUrl) || !YaqPlayerMedia.IsHttpUrl(player.HttpUrl)) continue;
+                if (!_playerImageLoading.Add(player.HttpUrl)) continue;
+                LoadPlayerImageAsync(player, player.HttpUrl, _playerImageGeneration).Forget();
             }
         }
 
-        private async UniTaskVoid LoadPlayerImageAsync(string imageKey, int generation)
+        private bool TryGetPlayerTexture(HudPlayer player, out Texture2D texture)
+        {
+            texture = null;
+            if (!string.IsNullOrEmpty(player.Id) &&
+                _playerImages.TryGetValue("id:" + player.Id, out texture) && texture != null)
+            {
+                return true;
+            }
+
+            var nameKey = YaqPlayerMedia.NameCacheKey(player.Name);
+            if (!string.IsNullOrEmpty(nameKey) &&
+                _playerImages.TryGetValue(nameKey, out texture) && texture != null)
+            {
+                return true;
+            }
+
+            if (!string.IsNullOrEmpty(player.CacheKey) &&
+                _playerImages.TryGetValue(player.CacheKey, out texture) && texture != null)
+            {
+                return true;
+            }
+
+            texture = null;
+            return false;
+        }
+
+        private void ApplyStreamPlayerImages(IEnumerable<YaqPreviewPlayer> players)
+        {
+            if (players == null) return;
+            foreach (var player in players)
+            {
+                if (player == null) continue;
+                var raw = YaqPlayerMedia.ExtractImageRef(
+                    player.id, YaqPlayerMedia.KnownImageFields(player), player.Extra);
+                if (YaqPlayerMedia.IsInlineImage(raw))
+                {
+                    ApplyInlinePlayerImage(player.id, player.name, raw, false);
+                }
+            }
+        }
+
+        private void ApplyStreamPlayerImages(IEnumerable<YaqSetPlayer> players)
+        {
+            if (players == null) return;
+            foreach (var player in players)
+            {
+                if (player == null) continue;
+                var raw = YaqPlayerMedia.ExtractImageRef(
+                    player.id, YaqPlayerMedia.KnownImageFields(player), player.Extra);
+                if (YaqPlayerMedia.IsInlineImage(raw))
+                {
+                    ApplyInlinePlayerImage(player.id, player.name, raw, false);
+                }
+            }
+        }
+
+        private void ApplyPlayerImageList(JObject msg)
+        {
+            var list = msg["players"] ?? msg["images"] ?? msg["profiles"];
+            if (list is not JArray array) return;
+            foreach (var item in array)
+            {
+                ApplyPlayerImageMessage(item);
+            }
+        }
+
+        private void ApplyPlayerImageMessage(JToken node)
+        {
+            if (node == null) return;
+
+            var id = node.Value<string>("playerId")
+                ?? node.Value<string>("id")
+                ?? node.Value<string>("profileId");
+            var name = node.Value<string>("name")
+                ?? node.Value<string>("playerName")
+                ?? node.Value<string>("profileName");
+            var mime = node.Value<string>("mime") ?? node.Value<string>("contentType");
+            var payload = node.Value<string>("dataUrl")
+                ?? node.Value<string>("data_url")
+                ?? node.Value<string>("imageBase64")
+                ?? node.Value<string>("image_base64")
+                ?? node.Value<string>("profileImage")
+                ?? node.Value<string>("photo")
+                ?? node.Value<string>("avatar");
+
+            var imageToken = node["image"];
+            if (payload == null && imageToken != null && imageToken.Type == JTokenType.String)
+            {
+                payload = imageToken.Value<string>();
+            }
+
+            if (payload == null && imageToken is JObject imageObj)
+            {
+                payload = imageObj.Value<string>("dataUrl")
+                    ?? imageObj.Value<string>("data_url")
+                    ?? imageObj.Value<string>("base64")
+                    ?? imageObj.Value<string>("url");
+                mime ??= imageObj.Value<string>("mime") ?? imageObj.Value<string>("contentType");
+            }
+
+            if (YaqPlayerMedia.IsHttpUrl(payload))
+            {
+                var player = new HudPlayer(id, name, YaqPlayerMedia.PlayerCacheKey(id, name), payload);
+                if (!_playerImageLoading.Add(payload)) return;
+                LoadPlayerImageAsync(player, payload, _playerImageGeneration).Forget();
+                return;
+            }
+
+            var dataUrl = YaqPlayerMedia.ToDataUrl(payload, mime);
+            if (dataUrl == null) return;
+            ApplyInlinePlayerImage(id, name, dataUrl, true);
+        }
+
+        private void ApplyInlinePlayerImage(string id, string name, string payload, bool replace)
+        {
+            var cacheKey = YaqPlayerMedia.PlayerCacheKey(id, name);
+            if (!replace && !string.IsNullOrEmpty(cacheKey) &&
+                _playerImages.TryGetValue(cacheKey, out var existing) && existing != null)
+            {
+                return;
+            }
+
+            var dataUrl = YaqPlayerMedia.ToDataUrl(payload) ??
+                          (payload != null && payload.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                              ? payload
+                              : null);
+            if (string.IsNullOrEmpty(dataUrl)) return;
+
+            RememberPlayerTexture(id, name, TextureFromDataUrl(dataUrl));
+        }
+
+        private async UniTaskVoid LoadPlayerImageAsync(HudPlayer player, string imageKey, int generation)
         {
             byte[] bytes = null;
             try
             {
-                if (imageKey.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-                {
-                    Enqueue(() => ApplyLoadedPlayerImage(imageKey, generation, TextureFromDataUrl(imageKey)));
-                    return;
-                }
-
                 bytes = await UniTask.RunOnThreadPool(() =>
                 {
                     using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
@@ -1456,31 +1585,63 @@ namespace YARG.YAQ
                 YargLogger.LogFormatWarning("YAQ player image fetch failed ({0}): {1}", imageKey, ex.Message);
             }
 
-            Enqueue(() => ApplyLoadedPlayerImage(imageKey, generation, TextureFromImageBytes(bytes)));
+            Enqueue(() =>
+            {
+                _playerImageLoading.Remove(imageKey);
+                if (generation != _playerImageGeneration)
+                {
+                    return;
+                }
+
+                RememberPlayerTexture(player.Id, player.Name, TextureFromImageBytes(bytes));
+            });
         }
 
-        private void ApplyLoadedPlayerImage(string imageKey, int generation, Texture2D texture)
+        private void RememberPlayerTexture(string id, string name, Texture2D texture)
         {
-            _playerImageLoading.Remove(imageKey);
-            if (generation != _playerImageGeneration)
+            if (texture == null) return;
+
+            var assigned = false;
+            if (!string.IsNullOrEmpty(id))
             {
-                if (texture != null) Destroy(texture);
-                return;
+                AssignPlayerTexture("id:" + id, texture);
+                assigned = true;
             }
 
-            if (_playerImages.TryGetValue(imageKey, out var existing) && existing != null)
+            var nameKey = YaqPlayerMedia.NameCacheKey(name);
+            if (!string.IsNullOrEmpty(nameKey))
             {
-                Destroy(existing);
+                AssignPlayerTexture(nameKey, texture);
+                assigned = true;
             }
 
-            _playerImages[imageKey] = texture;
+            if (!assigned)
+            {
+                Destroy(texture);
+            }
+        }
+
+        private void AssignPlayerTexture(string key, Texture2D texture)
+        {
+            if (_playerImages.TryGetValue(key, out var old) && old != null && old != texture)
+            {
+                _playerImages[key] = texture;
+                if (!_playerImages.ContainsValue(old))
+                {
+                    Destroy(old);
+                }
+            }
+            else
+            {
+                _playerImages[key] = texture;
+            }
         }
 
         private void ClearPlayerImages()
         {
             _playerImageGeneration++;
             _playerImageLoading.Clear();
-            foreach (var texture in _playerImages.Values)
+            foreach (var texture in _playerImages.Values.Distinct())
             {
                 if (texture != null) Destroy(texture);
             }

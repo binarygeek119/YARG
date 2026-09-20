@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
@@ -71,6 +72,36 @@ namespace YARG.YAQ
 
         public void Dispose() => Stop();
 
+        private const int MaxMessageBytes = 8 * 1024 * 1024;
+
+        private static async Task<string> ReadRemainingMessageAsync(
+            ClientWebSocket socket,
+            byte[] buffer,
+            WebSocketReceiveResult first,
+            CancellationToken token)
+        {
+            using var ms = new MemoryStream();
+            ms.Write(buffer, 0, first.Count);
+            var result = first;
+            while (!result.EndOfMessage)
+            {
+                if (ms.Length > MaxMessageBytes)
+                {
+                    throw new InvalidOperationException("YAQ stream message exceeded 8MB");
+                }
+
+                result = await socket.ReceiveAsync(buffer, token);
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    return null;
+                }
+
+                ms.Write(buffer, 0, result.Count);
+            }
+
+            return Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
+        }
+
         private async Task RunAsync(CancellationToken token)
         {
             while (!token.IsCancellationRequested)
@@ -81,9 +112,14 @@ namespace YARG.YAQ
                     await _socket.ConnectAsync(new Uri(_url), token);
                     YargLogger.LogFormatInfo("YAQ bridge connected to {0}", _url);
                     Connected?.Invoke();
-                    Send(new { type = "hello", version = "yarg-event-1" });
+                    Send(new
+                    {
+                        type = "hello",
+                        version = "yarg-event-1",
+                        capabilities = new[] { "player.image", "player.images", "profile.image" }
+                    });
 
-                    var buffer = new byte[1024 * 256];
+                    var buffer = new byte[64 * 1024];
                     while (_socket.State == WebSocketState.Open && !token.IsCancellationRequested)
                     {
                         while (_outbound.TryDequeue(out var outbound))
@@ -102,9 +138,26 @@ namespace YARG.YAQ
                                 break;
                             }
 
-                            var json = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                            var obj = JObject.Parse(json);
-                            MessageReceived?.Invoke(obj);
+                            string json;
+                            if (result.EndOfMessage)
+                            {
+                                json = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                            }
+                            else
+                            {
+                                json = await ReadRemainingMessageAsync(_socket, buffer, result, token);
+                            }
+
+                            if (string.IsNullOrEmpty(json)) continue;
+                            try
+                            {
+                                var obj = JObject.Parse(json);
+                                MessageReceived?.Invoke(obj);
+                            }
+                            catch (Exception parseEx)
+                            {
+                                YargLogger.LogFormatWarning("YAQ stream message parse failed: {0}", parseEx.Message);
+                            }
                         }
                         catch (OperationCanceledException) when (!token.IsCancellationRequested)
                         {
@@ -144,6 +197,8 @@ namespace YARG.YAQ
         public string photoUrl;
         public string profileImage;
         public string profileImageUrl;
+        public string dataUrl;
+        public string imageBase64;
 
         [JsonExtensionData]
         public IDictionary<string, JToken> Extra;
@@ -162,6 +217,8 @@ namespace YARG.YAQ
         public string photoUrl;
         public string profileImage;
         public string profileImageUrl;
+        public string dataUrl;
+        public string imageBase64;
 
         [JsonExtensionData]
         public IDictionary<string, JToken> Extra;
@@ -171,23 +228,48 @@ namespace YARG.YAQ
     {
         private static readonly string[] ExtraKeys =
         {
+            "dataUrl", "data_url", "imageBase64", "image_base64", "base64",
+            "imageData", "image_data", "profileImage", "profileImageUrl",
             "imageUrl", "image_url", "avatarUrl", "avatar_url",
-            "photoUrl", "photo_url", "profileImage", "profileImageUrl",
-            "profile_image", "profile_image_url", "pictureUrl", "picture_url",
-            "dataUrl", "data_url", "image", "avatar", "picture", "photo"
+            "photoUrl", "photo_url", "profile_image", "profile_image_url",
+            "pictureUrl", "picture_url", "image", "avatar", "picture", "photo"
         };
+
+        public static string[] KnownImageFields(YaqPreviewPlayer player)
+        {
+            if (player == null) return Array.Empty<string>();
+            return new[]
+            {
+                player.dataUrl, player.imageBase64, player.profileImage,
+                player.imageUrl, player.avatarUrl, player.photoUrl, player.profileImageUrl
+            };
+        }
+
+        public static string[] KnownImageFields(YaqSetPlayer player)
+        {
+            if (player == null) return Array.Empty<string>();
+            return new[]
+            {
+                player.dataUrl, player.imageBase64, player.profileImage,
+                player.imageUrl, player.avatarUrl, player.photoUrl, player.profileImageUrl
+            };
+        }
 
         public static string ExtractImageRef(
             string id,
             IEnumerable<string> known,
             IDictionary<string, JToken> extra)
         {
+            string fallback = null;
+
             if (known != null)
             {
                 foreach (var value in known)
                 {
                     var resolved = NormalizeRef(value);
-                    if (resolved != null) return resolved;
+                    if (resolved == null) continue;
+                    if (IsInlineImage(resolved)) return resolved;
+                    fallback ??= resolved;
                 }
             }
 
@@ -197,11 +279,114 @@ namespace YARG.YAQ
                 {
                     if (!TryGetExtra(extra, key, out var token)) continue;
                     var resolved = NormalizeToken(token);
-                    if (resolved != null) return resolved;
+                    if (resolved == null) continue;
+                    if (IsInlineImage(resolved)) return resolved;
+                    fallback ??= resolved;
                 }
             }
 
-            return string.IsNullOrEmpty(id) ? null : $"/api/players/{Uri.EscapeDataString(id)}/image";
+            return fallback;
+        }
+
+        public static bool IsInlineImage(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return false;
+            if (value.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) return true;
+            return IsRawBase64(value);
+        }
+
+        public static bool IsHttpUrl(string value)
+        {
+            return Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+                   (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+        }
+
+        public static string ToDataUrl(string payload, string mime = null)
+        {
+            var value = NormalizeRef(payload);
+            if (value == null) return null;
+            if (value.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) return value;
+            if (!IsRawBase64(value)) return null;
+
+            var type = string.IsNullOrWhiteSpace(mime) || mime.Contains('/') == false
+                ? GuessMimeFromBase64(value)
+                : mime.Trim();
+            if (string.IsNullOrEmpty(type) ||
+                type.StartsWith("player.", StringComparison.OrdinalIgnoreCase) ||
+                type.StartsWith("profile.", StringComparison.OrdinalIgnoreCase))
+            {
+                type = GuessMimeFromBase64(value);
+            }
+
+            return $"data:{type};base64,{value}";
+        }
+
+        public static string ToAbsoluteUrl(string wsUrl, string imageRef)
+        {
+            if (string.IsNullOrEmpty(imageRef) || IsInlineImage(imageRef)) return imageRef;
+            if (IsHttpUrl(imageRef)) return imageRef;
+
+            var origin = HttpOriginFromBridge(wsUrl);
+            if (imageRef.StartsWith("/")) return origin + imageRef;
+            return origin + "/" + imageRef;
+        }
+
+        public static string HttpOriginFromBridge(string wsUrl)
+        {
+            if (Uri.TryCreate(wsUrl, UriKind.Absolute, out var uri))
+            {
+                var scheme = uri.Scheme == "wss" ? "https" : "http";
+                return $"{scheme}://{uri.Authority}";
+            }
+
+            return "http://127.0.0.1:3000";
+        }
+
+        public static string PlayerCacheKey(string id, string name)
+        {
+            if (!string.IsNullOrEmpty(id)) return "id:" + id;
+            if (!string.IsNullOrEmpty(name)) return "name:" + name.Trim().ToLowerInvariant();
+            return null;
+        }
+
+        public static string NameCacheKey(string name)
+        {
+            return string.IsNullOrWhiteSpace(name) ? null : "name:" + name.Trim().ToLowerInvariant();
+        }
+
+        private static bool IsRawBase64(string value)
+        {
+            if (value.Length < 64) return false;
+            if (value.IndexOf("://", StringComparison.Ordinal) >= 0) return false;
+            if (value.IndexOf('\\') >= 0 || value.IndexOf(' ') >= 0) return false;
+
+            var padding = 0;
+            for (var i = value.Length - 1; i >= 0 && value[i] == '='; i--)
+            {
+                padding++;
+                if (padding > 2) return false;
+            }
+
+            var dataLength = value.Length - padding;
+            if (dataLength < 64) return false;
+
+            for (var i = 0; i < dataLength; i++)
+            {
+                var c = value[i];
+                var ok = c is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '+' or '/' or '-' or '_';
+                if (!ok) return false;
+            }
+
+            return dataLength % 4 != 1;
+        }
+
+        private static string GuessMimeFromBase64(string value)
+        {
+            if (value.StartsWith("iVBOR", StringComparison.Ordinal)) return "image/png";
+            if (value.StartsWith("R0lGOD", StringComparison.Ordinal)) return "image/gif";
+            if (value.StartsWith("UklGR", StringComparison.Ordinal)) return "image/webp";
+            if (value.StartsWith("/9j/", StringComparison.Ordinal)) return "image/jpeg";
+            return "image/jpeg";
         }
 
         private static bool TryGetExtra(
@@ -223,28 +408,6 @@ namespace YARG.YAQ
             return false;
         }
 
-        public static string ToAbsoluteUrl(string wsUrl, string imageRef)
-        {
-            if (string.IsNullOrEmpty(imageRef)) return null;
-            if (imageRef.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) return imageRef;
-            if (Uri.TryCreate(imageRef, UriKind.Absolute, out _)) return imageRef;
-
-            var origin = HttpOriginFromBridge(wsUrl);
-            if (imageRef.StartsWith("/")) return origin + imageRef;
-            return origin + "/" + imageRef;
-        }
-
-        public static string HttpOriginFromBridge(string wsUrl)
-        {
-            if (Uri.TryCreate(wsUrl, UriKind.Absolute, out var uri))
-            {
-                var scheme = uri.Scheme == "wss" ? "https" : "http";
-                return $"{scheme}://{uri.Authority}";
-            }
-
-            return "http://127.0.0.1:3000";
-        }
-
         private static string NormalizeToken(JToken token)
         {
             if (token == null || token.Type == JTokenType.Null) return null;
@@ -253,6 +416,9 @@ namespace YARG.YAQ
             {
                 return NormalizeRef(obj.Value<string>("dataUrl"))
                     ?? NormalizeRef(obj.Value<string>("data_url"))
+                    ?? NormalizeRef(obj.Value<string>("imageBase64"))
+                    ?? NormalizeRef(obj.Value<string>("image_base64"))
+                    ?? NormalizeRef(obj.Value<string>("base64"))
                     ?? NormalizeRef(obj.Value<string>("url"))
                     ?? NormalizeRef(obj.Value<string>("src"))
                     ?? NormalizeRef(obj.Value<string>("href"));
