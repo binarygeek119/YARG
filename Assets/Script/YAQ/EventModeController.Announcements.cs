@@ -18,6 +18,9 @@ namespace YARG.YAQ
         private StemMixer _announcementMixer;
         private int _announcementGeneration;
         private bool _adsPausedForAnnouncement;
+        private bool _announcementLoading;
+
+        private bool AnnouncementBusy => _announcementMixer != null || _announcementLoading;
 
         private void HandleAnnouncementPlay(JObject msg)
         {
@@ -29,14 +32,18 @@ namespace YARG.YAQ
         private void QueueOrPlayAnnouncement(string id)
         {
             var scene = GlobalVariables.Instance?.CurrentScene;
-            if (scene is SceneIndex.Gameplay or SceneIndex.Score)
+            if (scene is SceneIndex.Gameplay or SceneIndex.Score || AnnouncementBusy)
             {
                 if (!_announcementQueue.Contains(id))
                 {
                     _announcementQueue.Enqueue(id);
                 }
 
-                YargLogger.LogFormatInfo("YAQ announcement queued until Event/Ads: {0}", id);
+                YargLogger.LogFormatInfo(
+                    scene is SceneIndex.Gameplay or SceneIndex.Score
+                        ? "YAQ announcement queued until Event/Ads: {0}"
+                        : "YAQ announcement queued behind current clip: {0}",
+                    id);
                 return;
             }
 
@@ -47,7 +54,7 @@ namespace YARG.YAQ
         {
             var scene = GlobalVariables.Instance?.CurrentScene;
             var venueIdle = scene is SceneIndex.Event or SceneIndex.Ads or SceneIndex.Menu;
-            if (_announcementMixer != null)
+            if (AnnouncementBusy)
             {
                 if (_adsMixer != null && scene == SceneIndex.Ads)
                 {
@@ -77,12 +84,14 @@ namespace YARG.YAQ
 
         private void PlayAnnouncement(string id)
         {
+            _announcementLoading = true;
             LoadAnnouncementAsync(id, ++_announcementGeneration).Forget();
         }
 
         private void StopAnnouncement()
         {
             _announcementGeneration++;
+            _announcementLoading = false;
             _announcementQueue.Clear();
             DisposeAnnouncementMixer();
         }
@@ -114,6 +123,13 @@ namespace YARG.YAQ
             return $"http://127.0.0.1:3000/api/messages/{escaped}/audio";
         }
 
+        private static bool LooksLikeMp3(byte[] bytes)
+        {
+            if (bytes == null || bytes.Length < 3) return false;
+            if (bytes[0] == (byte)'I' && bytes[1] == (byte)'D' && bytes[2] == (byte)'3') return true;
+            return bytes.Length >= 2 && bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0;
+        }
+
         private async UniTaskVoid LoadAnnouncementAsync(string id, int generation)
         {
             byte[] bytes = null;
@@ -136,8 +152,9 @@ namespace YARG.YAQ
             Enqueue(() =>
             {
                 if (generation != _announcementGeneration) return;
-                if (bytes == null || bytes.Length < 44)
+                if (bytes == null || bytes.Length < 32)
                 {
+                    _announcementLoading = false;
                     YargLogger.LogFormatWarning("YAQ announcement audio missing for {0}", id);
                     return;
                 }
@@ -148,13 +165,15 @@ namespace YARG.YAQ
                     var volume = SettingsManager.Settings?.PreviewVolume.Value ?? 0.5f;
                     if (volume < 0.2f) volume = 0.5f;
                     var stream = new MemoryStream(bytes, writable: false);
+                    var fileName = LooksLikeMp3(bytes) ? "yaq-announcement.mp3" : "yaq-announcement.wav";
                     _announcementMixer = GlobalAudioHandler.LoadCustomFile(
-                        "yaq-announcement",
+                        fileName,
                         stream,
                         1f,
                         volume,
                         false,
                         SongStem.Song);
+                    _announcementLoading = false;
                     if (_announcementMixer == null)
                     {
                         YargLogger.LogWarning("YAQ announcement mixer failed");
@@ -173,6 +192,7 @@ namespace YARG.YAQ
                 }
                 catch (Exception ex)
                 {
+                    _announcementLoading = false;
                     YargLogger.LogFormatWarning("YAQ announcement play failed: {0}", ex.Message);
                     DisposeAnnouncementMixer();
                 }
