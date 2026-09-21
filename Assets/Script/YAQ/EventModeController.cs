@@ -602,14 +602,16 @@ namespace YARG.YAQ
             public readonly string SlotId;
             public readonly string Instrument;
             public readonly bool Ready;
+            public readonly bool IsBot;
 
-            public HudPlayer(string name, string id, string slotId, string instrument, bool ready)
+            public HudPlayer(string name, string id, string slotId, string instrument, bool ready, bool isBot = false)
             {
                 Name = name ?? string.Empty;
                 Id = id;
                 SlotId = slotId;
                 Instrument = instrument;
                 Ready = ready;
+                IsBot = isBot;
             }
         }
 
@@ -651,7 +653,8 @@ namespace YARG.YAQ
                     player.id ?? player.slotId,
                     player.slotId,
                     player.instrument,
-                    PlayerIsReady(player.id, player.slotId, player.name, player.isBot)));
+                    PlayerIsReady(player.id, player.slotId, player.name, player.isBot),
+                    player.isBot));
             }
 
             return list;
@@ -669,7 +672,8 @@ namespace YARG.YAQ
                     player.id ?? player.slotId,
                     player.slotId,
                     player.instrument,
-                    PlayerIsReady(player.id, player.slotId, player.name, player.isBot)));
+                    PlayerIsReady(player.id, player.slotId, player.name, player.isBot),
+                    player.isBot));
             }
 
             return list;
@@ -837,10 +841,20 @@ namespace YARG.YAQ
 
         private void MarkPlayerReady(HudPlayer player)
         {
+            if (player.IsBot) return;
             if (!string.IsNullOrEmpty(player.Id)) _readyKeys.Add(player.Id);
             if (!string.IsNullOrEmpty(player.SlotId)) _readyKeys.Add(player.SlotId);
             if (!string.IsNullOrEmpty(player.Name)) _readyKeys.Add(player.Name);
             YargLogger.LogFormatInfo("YAQ Event HUD ready: {0}", player.Name);
+        }
+
+        private void MarkPlayerUnready(HudPlayer player)
+        {
+            if (player.IsBot) return;
+            if (!string.IsNullOrEmpty(player.Id)) _readyKeys.Remove(player.Id);
+            if (!string.IsNullOrEmpty(player.SlotId)) _readyKeys.Remove(player.SlotId);
+            if (!string.IsNullOrEmpty(player.Name)) _readyKeys.Remove(player.Name);
+            YargLogger.LogFormatInfo("YAQ Event HUD unready: {0}", player.Name);
         }
 
         private bool AllFeaturedPlayersReady()
@@ -885,10 +899,11 @@ namespace YARG.YAQ
             }
         }
 
-        private void HandleRemotePlayerReady(JObject msg)
+        private void HandleRemotePlayerReady(JObject msg, bool ready)
         {
             if (!EventMode.IsActive) return;
             if (_phase is "playing" or "score") return;
+            if (!ready && _gameplayQueued) return;
 
             var setId = msg.Value<string>("setId");
             if (!string.IsNullOrEmpty(setId)) BindReadySet(setId);
@@ -901,14 +916,17 @@ namespace YARG.YAQ
                 return;
             }
 
-            MarkPlayerReady(new HudPlayer(name, id, slotId, msg.Value<string>("instrument"), false));
+            var hud = new HudPlayer(name, id, slotId, msg.Value<string>("instrument"), ready);
+            if (ready) MarkPlayerReady(hud);
+            else MarkPlayerUnready(hud);
             TryLaunchWhenAllReady();
         }
 
         private void OnMenuReadyInput(YargPlayer player, ref GameInput input)
         {
             if (!input.Button) return;
-            if ((MenuAction) input.Action != MenuAction.Green) return;
+            var action = (MenuAction) input.Action;
+            if (action != MenuAction.Green && action != MenuAction.Red) return;
             if (!EventMode.IsActive) return;
             if (GlobalVariables.Instance == null ||
                 GlobalVariables.Instance.CurrentScene != SceneIndex.Event)
@@ -917,6 +935,7 @@ namespace YARG.YAQ
             }
 
             if (_phase is "playing" or "score") return;
+            if (action == MenuAction.Red && _gameplayQueued) return;
 
             var players = CurrentHudPlayers();
             if (players.Count == 0) return;
@@ -924,26 +943,40 @@ namespace YARG.YAQ
             if (player == null)
             {
                 HudPlayer? fallback = null;
-                var unready = 0;
+                var matches = 0;
                 foreach (var hud in players)
                 {
-                    if (hud.Ready) continue;
-                    unready++;
+                    if (hud.IsBot) continue;
+                    if (action == MenuAction.Green)
+                    {
+                        if (hud.Ready) continue;
+                    }
+                    else if (!hud.Ready)
+                    {
+                        continue;
+                    }
+
+                    matches++;
                     fallback = hud;
                 }
 
-                if (unready == 1 && fallback.HasValue)
+                if (matches == 1 && fallback.HasValue)
                 {
-                    MarkPlayerReady(fallback.Value);
-                    TryLaunchWhenAllReady();
+                    ApplyMenuReady(fallback.Value, action == MenuAction.Green);
                 }
 
                 return;
             }
 
             if (!TryMatchHudPlayer(player, players, out var matched)) return;
+            if (matched.IsBot) return;
+            ApplyMenuReady(matched, action == MenuAction.Green);
+        }
 
-            MarkPlayerReady(matched);
+        private void ApplyMenuReady(HudPlayer player, bool ready)
+        {
+            if (ready) MarkPlayerReady(player);
+            else MarkPlayerUnready(player);
             TryLaunchWhenAllReady();
         }
 
@@ -1866,7 +1899,11 @@ namespace YARG.YAQ
                     break;
                 case "player.ready":
                     if (EventMode.Suspended) break;
-                    HandleRemotePlayerReady(msg);
+                    HandleRemotePlayerReady(msg, true);
+                    break;
+                case "player.unready":
+                    if (EventMode.Suspended) break;
+                    HandleRemotePlayerReady(msg, false);
                     break;
                 case "settings.update":
                     ApplyEventFlags(msg["flags"]?.ToObject<EventFlags>());
