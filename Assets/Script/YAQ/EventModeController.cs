@@ -150,23 +150,29 @@ namespace YARG.YAQ
             InputManager.MenuInput += OnMenuReadyInput;
             _bridge.Connected += () => Enqueue(() =>
             {
-                _status = EventMode.Suspended
-                    ? "Connected to YAQ — Event Mode off"
-                    : "Connected to YAQ — waiting for next set";
-                _phase = "idle";
+                if (EventMode.Suspended)
+                {
+                    _status = "Connected to YAQ — Event Mode off";
+                    ReportFlags();
+                    ReportEventModeState();
+                    return;
+                }
+
+                if (!HasActiveEventSession())
+                {
+                    _status = "Connected to YAQ — waiting for next set";
+                    _phase = "idle";
+                    SendState("idle");
+                }
+
                 ReportFlags();
                 ReportEventModeState();
-                if (!EventMode.Suspended)
-                {
-                    SendState("idle");
-                    TrySyncLibrary();
-                    RequestQr();
-                }
+                TrySyncLibrary();
+                RequestQr();
             });
             _bridge.Disconnected += () => Enqueue(() =>
             {
                 _status = "YAQ disconnected — retrying…";
-                _librarySynced = false;
             });
             _bridge.MessageReceived += msg => Enqueue(() => OnBridgeMessage(msg));
         }
@@ -802,6 +808,7 @@ namespace YARG.YAQ
 
             if (_currentSet == null || GlobalVariables.State.CurrentSong == null)
             {
+                if (_launchRequested) return;
                 RequestQueueLaunch();
                 return;
             }
@@ -897,6 +904,14 @@ namespace YARG.YAQ
             {
                 RequestQueueLaunch();
             }
+        }
+
+        private bool HasActiveEventSession()
+        {
+            return _countdownActive ||
+                   _gameplayQueued ||
+                   _currentSet != null ||
+                   _phase is "ready" or "playing" or "score";
         }
 
         private void HandleRemotePlayerReady(JObject msg, bool ready)
@@ -1929,7 +1944,7 @@ namespace YARG.YAQ
                     ReportFlags();
                     ReportEventModeState();
                     TrySyncLibrary();
-                    if (!EventMode.Suspended)
+                    if (!EventMode.Suspended && !HasActiveEventSession())
                     {
                         SendState("idle");
                     }
@@ -2004,6 +2019,15 @@ namespace YARG.YAQ
             {
                 _status = $"Song hash not in library: {set.songHash}";
                 YargLogger.LogFormatError("YAQ could not find song hash {0}", set.songHash);
+                _launchRequested = false;
+                CancelCountdown();
+                if (_currentSet != null &&
+                    string.Equals(_currentSet.id, set.id, StringComparison.Ordinal))
+                {
+                    _currentSet = null;
+                    GlobalVariables.State.CurrentSong = null;
+                }
+
                 SendError("song_not_found", set.id, set.songHash, "Song hash not in YARG library");
                 return;
             }

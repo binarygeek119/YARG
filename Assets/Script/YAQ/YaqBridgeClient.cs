@@ -27,6 +27,7 @@ namespace YARG.YAQ
         private readonly ConcurrentQueue<string> _outbound = new();
         private Task _loop;
         private string _url;
+        private int _generation;
 
         public bool IsConnected =>
             _socket != null && _socket.State == WebSocketState.Open;
@@ -34,13 +35,16 @@ namespace YARG.YAQ
         public void Start(string url)
         {
             _url = url;
+            var cts = new CancellationTokenSource();
             Stop();
-            _cts = new CancellationTokenSource();
-            _loop = Task.Run(() => RunAsync(_cts.Token));
+            _cts = cts;
+            var generation = ++_generation;
+            _loop = Task.Run(() => RunAsync(generation, cts.Token));
         }
 
         public void Stop()
         {
+            _generation++;
             try
             {
                 _cts?.Cancel();
@@ -50,16 +54,7 @@ namespace YARG.YAQ
                 // ignored
             }
 
-            try
-            {
-                _socket?.Abort();
-                _socket?.Dispose();
-            }
-            catch
-            {
-                // ignored
-            }
-
+            TryDisposeSocket(_socket);
             _socket = null;
             _cts = null;
         }
@@ -73,6 +68,29 @@ namespace YARG.YAQ
         public void Dispose() => Stop();
 
         private const int MaxInboundBytes = 8 * 1024 * 1024;
+        private const int ReconnectDelayMs = 2000;
+
+        private static void TryDisposeSocket(ClientWebSocket socket)
+        {
+            if (socket == null) return;
+            try
+            {
+                socket.Abort();
+            }
+            catch
+            {
+                // ignored
+            }
+
+            try
+            {
+                socket.Dispose();
+            }
+            catch
+            {
+                // ignored
+            }
+        }
 
         private static async Task<string> ReceiveTextAsync(
             ClientWebSocket socket,
@@ -99,15 +117,25 @@ namespace YARG.YAQ
             return Encoding.UTF8.GetString(payload.GetBuffer(), 0, (int)payload.Length);
         }
 
-        private async Task RunAsync(CancellationToken token)
+        private async Task RunAsync(int generation, CancellationToken token)
         {
-            while (!token.IsCancellationRequested)
+            while (!token.IsCancellationRequested && generation == _generation)
             {
+                ClientWebSocket socket = null;
+                var announced = false;
                 try
                 {
-                    _socket = new ClientWebSocket();
-                    await _socket.ConnectAsync(new Uri(_url), token);
+                    socket = new ClientWebSocket();
+                    await socket.ConnectAsync(new Uri(_url), token);
+                    if (generation != _generation || token.IsCancellationRequested)
+                    {
+                        TryDisposeSocket(socket);
+                        return;
+                    }
+
+                    _socket = socket;
                     YargLogger.LogFormatInfo("YAQ bridge connected to {0}", _url);
+                    announced = true;
                     Connected?.Invoke();
                     Send(new
                     {
@@ -122,19 +150,21 @@ namespace YARG.YAQ
                     });
 
                     var buffer = new byte[64 * 1024];
-                    while (_socket.State == WebSocketState.Open && !token.IsCancellationRequested)
+                    while (socket.State == WebSocketState.Open &&
+                           !token.IsCancellationRequested &&
+                           generation == _generation)
                     {
                         while (_outbound.TryDequeue(out var outbound))
                         {
                             var bytes = Encoding.UTF8.GetBytes(outbound);
-                            await _socket.SendAsync(bytes, WebSocketMessageType.Text, true, token);
+                            await socket.SendAsync(bytes, WebSocketMessageType.Text, true, token);
                         }
 
                         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
                         timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(250));
                         try
                         {
-                            var json = await ReceiveTextAsync(_socket, buffer, timeoutCts.Token);
+                            var json = await ReceiveTextAsync(socket, buffer, timeoutCts.Token);
                             if (json == null)
                             {
                                 break;
@@ -149,11 +179,36 @@ namespace YARG.YAQ
                         }
                     }
                 }
-                catch (Exception ex) when (!token.IsCancellationRequested)
+                catch (Exception ex) when (!token.IsCancellationRequested && generation == _generation)
                 {
                     YargLogger.LogFormatWarning("YAQ bridge disconnected: {0}", ex.Message);
-                    Disconnected?.Invoke();
-                    await Task.Delay(2000, token);
+                    if (announced)
+                    {
+                        Disconnected?.Invoke();
+                    }
+                }
+                finally
+                {
+                    if (ReferenceEquals(_socket, socket))
+                    {
+                        _socket = null;
+                    }
+
+                    TryDisposeSocket(socket);
+                }
+
+                if (token.IsCancellationRequested || generation != _generation)
+                {
+                    return;
+                }
+
+                try
+                {
+                    await Task.Delay(ReconnectDelayMs, token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
                 }
             }
         }
