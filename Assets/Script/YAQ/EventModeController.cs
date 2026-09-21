@@ -1400,7 +1400,12 @@ namespace YARG.YAQ
 
             if (!hasNext)
             {
-                DrawFittedLabel(body, "Waiting for the next song…", _mutedStyle, 14);
+                var waitRect = new Rect(
+                    nextRect.x + pad,
+                    nextRect.y + captionH + 6f,
+                    Mathf.Max(1f, nextRect.width - pad * 2f),
+                    Mathf.Max(1f, nextRect.height - captionH - 14f));
+                DrawFittedLabel(waitRect, "Waiting for the next group…", _mutedStyle, 14);
                 return;
             }
 
