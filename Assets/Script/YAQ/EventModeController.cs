@@ -45,6 +45,7 @@ namespace YARG.YAQ
         private GUIStyle _artistStyle;
         private GUIStyle _bodyStyle;
         private GUIStyle _playerNameStyle;
+        private GUIStyle _instrumentStyle;
         private GUIStyle _avatarInitialStyle;
         private GUIStyle _mutedStyle;
         private GUIStyle _qrCaptionStyle;
@@ -659,6 +660,12 @@ namespace YARG.YAQ
 
             GUILayout.Space(gap);
             GUILayout.Label(name ?? string.Empty, _playerNameStyle ?? _bodyStyle, GUILayout.Height(avatar));
+            var instrument = InstrumentLabelFor(name);
+            if (!string.IsNullOrEmpty(instrument))
+            {
+                GUILayout.Space(gap);
+                GUILayout.Label(instrument, _instrumentStyle ?? _mutedStyle, GUILayout.Height(avatar));
+            }
             GUILayout.EndHorizontal();
             GUILayout.Space(8f);
         }
@@ -680,6 +687,37 @@ namespace YARG.YAQ
             if (current != null) return current.id ?? current.slotId;
             var preview = _preview?.players?.Find(player => player != null && player.name == name);
             return preview?.id ?? preview?.slotId;
+        }
+
+        private string InstrumentLabelFor(string name)
+        {
+            var current = _currentPlayers?.Find(player => player != null && player.name == name);
+            if (current != null) return InstrumentLabel(current.instrument);
+            var preview = _preview?.players?.Find(player => player != null && player.name == name);
+            return InstrumentLabel(preview?.instrument);
+        }
+
+        internal static string InstrumentLabel(string instrument)
+        {
+            if (string.IsNullOrWhiteSpace(instrument)) return string.Empty;
+            return instrument switch
+            {
+                "FiveFretGuitar" or "SixFretGuitar" => "Guitar",
+                "FiveFretBass" or "SixFretBass" => "Bass",
+                "FiveFretRhythm" => "Rhythm",
+                "FiveFretCoop" or "FiveFretCoopGuitar" => "Co-op",
+                "Keys" => "Keys",
+                "ProKeys" => "Pro Keys",
+                "FourLaneDrums" => "Drums",
+                "ProDrums" => "Pro Drums",
+                "FiveLaneDrums" => "Five-lane Drums",
+                "EliteDrums" => "Elite Drums",
+                "ProGuitar_17" or "ProGuitar_17Fret" or "ProGuitar_22" or "ProGuitar_22Fret" => "Pro Guitar",
+                "ProBass_17" or "ProBass_17Fret" or "ProBass_22" or "ProBass_22Fret" => "Pro Bass",
+                "Vocals" => "Vocals",
+                "Harmony" => "Harmony",
+                _ => instrument
+            };
         }
 
         private void DrawJoinQr(Rect captionRect, Rect qrRect)
@@ -778,6 +816,15 @@ namespace YARG.YAQ
                 _playerNameStyle = new GUIStyle(_bodyStyle)
                 {
                     alignment = TextAnchor.MiddleLeft,
+                    wordWrap = false,
+                    clipping = TextClipping.Clip
+                };
+                _instrumentStyle = new GUIStyle(_bodyStyle)
+                {
+                    alignment = TextAnchor.MiddleLeft,
+                    fontSize = 22,
+                    fontStyle = FontStyle.Bold,
+                    normal = { textColor = new Color(0.72f, 0.82f, 0.9f) },
                     wordWrap = false,
                     clipping = TextClipping.Clip
                 };
