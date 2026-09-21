@@ -40,11 +40,13 @@ namespace YARG.YAQ
         private string _pendingSetId;
         private bool _librarySynced;
         private GUIStyle _titleStyle;
+        private GUIStyle _artistStyle;
         private GUIStyle _bodyStyle;
         private GUIStyle _mutedStyle;
         private GUIStyle _qrCaptionStyle;
         private GUIStyle _nextTitleStyle;
         private GUIStyle _nextPlayersStyle;
+        private GUIStyle _fitScratchStyle;
         private readonly ConcurrentQueue<Action> _mainThread = new();
 
         private Texture2D _currentCover;
@@ -321,7 +323,7 @@ namespace YARG.YAQ
             var areaW = Mathf.Max(1f, screenW - pad * 2f);
             var areaH = Mathf.Max(1f, screenH - pad - bottomReserve);
 
-            var titleH = Mathf.Clamp(areaH * 0.16f, 56f, 88f);
+            var titleH = Mathf.Clamp(areaH * 0.2f, 80f, 128f);
             var nextH = Mathf.Clamp(areaH * 0.2f, 72f, 110f);
 
             var qrSize = Mathf.Min(qrMax, areaW * 0.2f, areaH * 0.42f);
@@ -340,7 +342,8 @@ namespace YARG.YAQ
             var captionY = Mathf.Max(areaY, qrY - captionH);
             var contentW = Mathf.Max(0f, qrX - gap - areaX);
 
-            var titleRect = new Rect(areaX, areaY, contentW, titleH);
+            // Title/artist sit on the top row and can use the full width (QR is bottom-right).
+            var titleRect = new Rect(areaX, areaY, areaW, titleH);
             var nextRect = new Rect(areaX, areaY + areaH - nextH, contentW, nextH);
 
             var midY = areaY + titleH + gap;
@@ -451,17 +454,101 @@ namespace YARG.YAQ
 
         private void DrawCurrentHeader(Rect titleRect)
         {
-            GUILayout.BeginArea(titleRect);
-            if (TryGetCurrentSong(out _, out var title, out var artist, out _))
+            if (!TryGetCurrentSong(out _, out var title, out var artist, out _))
             {
-                GUILayout.Label(FormatSongLine(title, artist), _titleStyle);
-            }
-            else
-            {
-                GUILayout.Label("Waiting for the next group…", _bodyStyle);
+                DrawFittedLabel(titleRect, "Waiting for the next group…", _bodyStyle, 16);
+                return;
             }
 
-            GUILayout.EndArea();
+            var hasTitle = !string.IsNullOrEmpty(title);
+            var hasArtist = !string.IsNullOrEmpty(artist);
+            if (hasTitle && hasArtist)
+            {
+                const float lineGap = 4f;
+                var titleH = Mathf.Max(1f, (titleRect.height - lineGap) * 0.62f);
+                var titleArea = new Rect(titleRect.x, titleRect.y, titleRect.width, titleH);
+                var artistArea = new Rect(
+                    titleRect.x,
+                    titleRect.y + titleH + lineGap,
+                    titleRect.width,
+                    Mathf.Max(1f, titleRect.height - titleH - lineGap));
+                DrawFittedLabel(titleArea, title, _titleStyle, 18);
+                DrawFittedLabel(artistArea, artist, _artistStyle, 14);
+                return;
+            }
+
+            DrawFittedLabel(titleRect, hasTitle ? title : artist, _titleStyle, 18);
+        }
+
+        private void DrawFittedLabel(Rect rect, string text, GUIStyle baseStyle, int minSize)
+        {
+            if (string.IsNullOrEmpty(text) || rect.width < 1f || rect.height < 1f) return;
+
+            _fitScratchStyle ??= new GUIStyle(baseStyle);
+            _fitScratchStyle.font = baseStyle.font;
+            _fitScratchStyle.fontStyle = baseStyle.fontStyle;
+            _fitScratchStyle.normal.textColor = baseStyle.normal.textColor;
+            _fitScratchStyle.alignment = TextAnchor.MiddleLeft;
+            _fitScratchStyle.wordWrap = false;
+            _fitScratchStyle.clipping = TextClipping.Clip;
+            _fitScratchStyle.padding = new RectOffset(0, 0, 0, 0);
+            _fitScratchStyle.fontSize = FontSizeToFit(
+                _fitScratchStyle,
+                text,
+                rect.width,
+                rect.height,
+                minSize,
+                baseStyle.fontSize);
+            GUI.Label(rect, text, _fitScratchStyle);
+        }
+
+        /// <summary>
+        /// Largest font size at or below <paramref name="preferredSize"/> that fits in the box.
+        /// </summary>
+        internal static int FontSizeToFit(
+            GUIStyle style,
+            string text,
+            float maxWidth,
+            float maxHeight,
+            int minSize,
+            int preferredSize)
+        {
+            if (style == null || string.IsNullOrEmpty(text)) return preferredSize;
+
+            minSize = Mathf.Max(1, minSize);
+            preferredSize = Mathf.Max(minSize, preferredSize);
+            var content = new GUIContent(text);
+            var originalSize = style.fontSize;
+            var originalWrap = style.wordWrap;
+            try
+            {
+                style.wordWrap = false;
+                var lo = minSize;
+                var hi = preferredSize;
+                var best = minSize;
+                while (lo <= hi)
+                {
+                    var mid = (lo + hi) / 2;
+                    style.fontSize = mid;
+                    var size = style.CalcSize(content);
+                    if (size.x <= maxWidth && size.y <= maxHeight)
+                    {
+                        best = mid;
+                        lo = mid + 1;
+                    }
+                    else
+                    {
+                        hi = mid - 1;
+                    }
+                }
+
+                return best;
+            }
+            finally
+            {
+                style.fontSize = originalSize;
+                style.wordWrap = originalWrap;
+            }
         }
 
         private static void DrawAlbumArt(Rect rect, Texture2D texture)
@@ -524,17 +611,21 @@ namespace YARG.YAQ
 
         private void DrawNextSong(Rect nextRect)
         {
-            GUILayout.BeginArea(nextRect);
-            if (TryGetNextSong(out var title, out var artist, out var names))
-            {
-                GUILayout.Label(FormatSongLine(title, artist), _nextTitleStyle);
-                if (names.Count > 0)
-                {
-                    GUILayout.Label(string.Join("  ", names), _nextPlayersStyle);
-                }
-            }
+            if (!TryGetNextSong(out var title, out var artist, out var names)) return;
 
-            GUILayout.EndArea();
+            var line = FormatSongLine(title, artist);
+            var titleH = Mathf.Max(1f, nextRect.height * 0.55f);
+            var titleArea = new Rect(nextRect.x, nextRect.y, nextRect.width, titleH);
+            DrawFittedLabel(titleArea, line, _nextTitleStyle, 14);
+            if (names.Count > 0)
+            {
+                var namesArea = new Rect(
+                    nextRect.x,
+                    nextRect.y + titleH,
+                    nextRect.width,
+                    Mathf.Max(1f, nextRect.height - titleH));
+                DrawFittedLabel(namesArea, string.Join("  ", names), _nextPlayersStyle, 12);
+            }
         }
 
         private void EnsureStyles()
@@ -546,7 +637,15 @@ namespace YARG.YAQ
                     fontSize = 42,
                     fontStyle = FontStyle.Bold,
                     normal = { textColor = Color.white },
-                    wordWrap = true,
+                    wordWrap = false,
+                    clipping = TextClipping.Clip
+                };
+                _artistStyle = new GUIStyle(GUI.skin.label)
+                {
+                    fontSize = 28,
+                    fontStyle = FontStyle.Normal,
+                    normal = { textColor = new Color(0.9f, 0.95f, 1f) },
+                    wordWrap = false,
                     clipping = TextClipping.Clip
                 };
                 _bodyStyle = new GUIStyle(GUI.skin.label)
@@ -577,7 +676,7 @@ namespace YARG.YAQ
                 fontSize = 32,
                 fontStyle = FontStyle.Bold,
                 normal = { textColor = Color.white },
-                wordWrap = true,
+                wordWrap = false,
                 clipping = TextClipping.Clip
             };
             _nextPlayersStyle = new GUIStyle(GUI.skin.label)
