@@ -83,7 +83,8 @@ namespace YARG.YAQ
         private static readonly Color ReadyGreen = new(0.20f, 0.78f, 0.32f, 1f);
         private static readonly Color ReadyRed = new(0.86f, 0.12f, 0.20f, 1f);
         private static readonly Color ReadyGlyph = new(0.95f, 0.93f, 0.28f, 1f);
-        private static readonly Color NextBarFill = new(0.86f, 0.09f, 0.18f, 1f);
+        private static readonly Color NextBarDark = new(0.42f, 0.02f, 0.07f, 1f);
+        private static readonly Color NextBarLight = new(0.98f, 0.30f, 0.36f, 1f);
         private static readonly Color QrYellow = new(0.79f, 0.64f, 0.10f, 1f);
         private static readonly Color NextArtistBlue = new(0.45f, 0.72f, 0.95f, 1f);
 
@@ -942,7 +943,7 @@ namespace YARG.YAQ
         {
             if (nextRect.width < 8f || nextRect.height < 8f) return;
 
-            FillRect(nextRect, NextBarFill);
+            DrawHorizontalGradient(nextRect, NextBarDark, NextBarLight);
 
             var pad = 20f;
             var hasNext = TryGetNextSong(out var title, out var artist, out _);
@@ -1022,6 +1023,35 @@ namespace YARG.YAQ
             GUI.color = color;
             GUI.DrawTexture(rect, Texture2D.whiteTexture);
             GUI.color = prev;
+        }
+
+        private void DrawHorizontalGradient(Rect rect, Color left, Color right)
+        {
+            if (Event.current.type != EventType.Repaint) return;
+            var tex = HorizontalGradientTexture(left, right);
+            if (tex != null) GUI.DrawTexture(rect, tex, ScaleMode.StretchToFill, false);
+        }
+
+        private Texture2D HorizontalGradientTexture(Color left, Color right)
+        {
+            var key = $"hg:{ColorKey(left)}:{ColorKey(right)}";
+            if (_hudShapes.TryGetValue(key, out var cached) && cached != null) return cached;
+
+            const int width = 256;
+            var tex = new Texture2D(width, 1, TextureFormat.RGBA32, false)
+            {
+                hideFlags = HideFlags.HideAndDontSave,
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+            for (var x = 0; x < width; x++)
+            {
+                tex.SetPixel(x, 0, Color.Lerp(left, right, x / (width - 1f)));
+            }
+
+            tex.Apply(false, false);
+            _hudShapes[key] = tex;
+            return tex;
         }
 
         private void DrawRounded(Rect rect, int radius, Color fill, Color border, int borderWidth)
