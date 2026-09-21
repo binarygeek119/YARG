@@ -53,6 +53,8 @@ namespace YARG.YAQ
         private GUIStyle _nextArtistStyle;
         private GUIStyle _nextPlayersStyle;
         private GUIStyle _nextCaptionStyle;
+        private GUIStyle _readyStyle;
+        private GUIStyle _chipNameStyle;
         private GUIStyle _fitScratchStyle;
         private readonly ConcurrentQueue<Action> _mainThread = new();
 
@@ -71,6 +73,18 @@ namespace YARG.YAQ
         private int _qrLoadGeneration;
         private float _nextQrRetryAt;
         private readonly Dictionary<string, Sprite> _instrumentIcons = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Texture2D> _hudShapes = new();
+        private Texture2D _whiteCircle;
+
+        private static readonly Color PanelFill = new(0.04f, 0.09f, 0.14f, 0.94f);
+        private static readonly Color PanelBorder = new(0.72f, 0.76f, 0.80f, 0.95f);
+        private static readonly Color CardTeal = new(0.07f, 0.55f, 0.56f, 1f);
+        private static readonly Color ReadyGreen = new(0.20f, 0.78f, 0.32f, 1f);
+        private static readonly Color ReadyRed = new(0.86f, 0.12f, 0.20f, 1f);
+        private static readonly Color ReadyGlyph = new(0.95f, 0.93f, 0.28f, 1f);
+        private static readonly Color NextBarFill = new(0.86f, 0.09f, 0.18f, 1f);
+        private static readonly Color QrYellow = new(0.79f, 0.64f, 0.10f, 1f);
+        private static readonly Color NextArtistBlue = new(0.45f, 0.72f, 0.95f, 1f);
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Bootstrap()
@@ -166,6 +180,7 @@ namespace YARG.YAQ
             _status = "YAQ stream off";
             ClearCovers();
             ClearQr();
+            ClearHudShapes();
             YaqProfileAvatar.ClearCache();
             ApplyMainMenuVisibility();
         }
@@ -223,6 +238,7 @@ namespace YARG.YAQ
         {
             ClearCovers();
             ClearQr();
+            ClearHudShapes();
             YaqProfileAvatar.ClearCache();
             _bridge?.Dispose();
             if (Instance == this) Instance = null;
@@ -281,14 +297,14 @@ namespace YARG.YAQ
             var layout = ComputeHudLayout(Screen.width, Screen.height, MeasureHelpBarHeight());
 
             DrawCurrentHeader(layout.TitleRect);
-            if (TryGetCurrentSong(out var cover, out _, out _, out var currentNames))
+            if (TryGetCurrentSong(out var cover, out _, out _, out _))
             {
                 DrawAlbumArt(layout.ArtRect, cover);
-                DrawPlayerGrid(layout.PlayersRect, currentNames);
             }
 
-            DrawNextSong(layout.NextRect);
-            DrawJoinQr(layout.QrCaptionRect, layout.QrRect);
+            DrawPlayerPanel(layout.PlayersRect, CurrentHudPlayers());
+            DrawNextBar(layout.NextRect);
+            DrawQrBlock(layout.QrRect);
         }
 
         internal readonly struct EventHudLayout
@@ -297,7 +313,6 @@ namespace YARG.YAQ
             public readonly Rect ArtRect;
             public readonly Rect PlayersRect;
             public readonly Rect NextRect;
-            public readonly Rect QrCaptionRect;
             public readonly Rect QrRect;
 
             public EventHudLayout(
@@ -305,14 +320,12 @@ namespace YARG.YAQ
                 Rect artRect,
                 Rect playersRect,
                 Rect nextRect,
-                Rect qrCaptionRect,
                 Rect qrRect)
             {
                 TitleRect = titleRect;
                 ArtRect = artRect;
                 PlayersRect = playersRect;
                 NextRect = nextRect;
-                QrCaptionRect = qrCaptionRect;
                 QrRect = qrRect;
             }
         }
@@ -325,62 +338,48 @@ namespace YARG.YAQ
         internal const float HelpBarGap = 8f;
 
         /// <summary>
-        /// Mockup layout: current title on top, art + two-column players, next song
-        /// bottom-left, compact QR bottom-right (~176px) above the player Help Bar.
+        /// Mockup layout: title top-left, album + rounded player panel, yellow QR
+        /// column on the right, red UP NEXT bar along the bottom.
         /// </summary>
         internal static EventHudLayout ComputeHudLayout(
             float screenW,
             float screenH,
             float helpBarH = HelpBarReferenceHeight)
         {
-            const float artMax = 280f;
-            const float qrMax = 176f;
-            const float gap = 24f;
-            const float captionH = 22f;
+            const float artMax = 260f;
+            const float qrMax = 220f;
+            const float gap = 18f;
 
-            var pad = Mathf.Clamp(Mathf.Min(screenW, screenH) * 0.045f, 16f, 48f);
+            var pad = Mathf.Clamp(Mathf.Min(screenW, screenH) * 0.04f, 16f, 40f);
             var bottomReserve = Mathf.Max(0f, helpBarH) + HelpBarGap;
             var areaX = pad;
             var areaY = pad;
             var areaW = Mathf.Max(1f, screenW - pad * 2f);
             var areaH = Mathf.Max(1f, screenH - pad - bottomReserve);
 
-            var titleH = Mathf.Clamp(areaH * 0.2f, 80f, 128f);
-            var nextH = Mathf.Clamp(areaH * 0.24f, 96f, 168f);
-
-            var qrSize = Mathf.Min(qrMax, areaW * 0.2f, areaH * 0.42f);
-            qrSize = Mathf.Clamp(qrSize, 96f, qrMax);
+            var titleH = Mathf.Clamp(areaH * 0.16f, 72f, 108f);
+            var nextH = Mathf.Clamp(areaH * 0.18f, 100f, 136f);
+            var qrSize = Mathf.Clamp(Mathf.Min(qrMax, areaW * 0.22f, areaH * 0.4f), 150f, qrMax);
 
             var qrX = areaX + areaW - qrSize;
             var qrY = areaY + areaH - qrSize;
-            if (qrY < areaY + titleH + captionH + gap)
-            {
-                qrY = areaY + titleH + captionH + gap;
-                qrSize = Mathf.Clamp(areaY + areaH - qrY, 32f, qrMax);
-                qrX = areaX + areaW - qrSize;
-                qrY = areaY + areaH - qrSize;
-            }
-
-            var captionY = Mathf.Max(areaY, qrY - captionH);
             var contentW = Mathf.Max(0f, qrX - gap - areaX);
 
-            // Title/artist sit on the top row and can use the full width (QR is bottom-right).
-            var titleRect = new Rect(areaX, areaY, areaW, titleH);
-            var nextRect = new Rect(areaX, areaY + areaH - nextH, contentW, nextH);
+            var titleRect = new Rect(areaX, areaY, contentW, titleH);
+            var nextRect = new Rect(0f, areaY + areaH - nextH, qrX, nextH);
+            var qrRect = new Rect(qrX, qrY, qrSize, qrSize);
 
             var midY = areaY + titleH + gap;
             var midH = Mathf.Max(0f, nextRect.y - gap - midY);
-            var artSize = Mathf.Min(artMax, midH, contentW * 0.38f);
+            var artSize = Mathf.Min(artMax, midH, contentW * 0.34f);
             var artRect = new Rect(areaX, midY, artSize, artSize);
             var playersRect = new Rect(
                 areaX + artSize + gap,
                 midY,
                 Mathf.Max(0f, contentW - artSize - gap),
-                Mathf.Max(0f, artSize));
-            var qrCaptionRect = new Rect(qrX, captionY, qrSize, captionH);
-            var qrRect = new Rect(qrX, qrY, qrSize, qrSize);
+                Mathf.Max(0f, nextRect.y - midY));
 
-            return new EventHudLayout(titleRect, artRect, playersRect, nextRect, qrCaptionRect, qrRect);
+            return new EventHudLayout(titleRect, artRect, playersRect, nextRect, qrRect);
         }
 
         internal static float DefaultHelpBarHeight(float screenW, float screenH)
@@ -602,100 +601,204 @@ namespace YARG.YAQ
             }
         }
 
-        private void DrawPlayerGrid(Rect rect, List<string> names)
+        private readonly struct HudPlayer
         {
-            if (names == null || names.Count == 0 || rect.width < 8f) return;
+            public readonly string Name;
+            public readonly string Id;
+            public readonly string Instrument;
+            public readonly bool Ready;
 
-            const float avatar = 48f;
-            const float gap = 12f;
-            GUILayout.BeginArea(rect);
-            var leftCount = names.Count <= 1 ? names.Count : (names.Count + 1) / 2;
-            GUILayout.BeginHorizontal();
-            GUILayout.BeginVertical();
-            for (var i = 0; i < leftCount; i++)
+            public HudPlayer(string name, string id, string instrument, bool ready)
             {
-                DrawPlayerNameRow(names[i], avatar, gap);
+                Name = name ?? string.Empty;
+                Id = id;
+                Instrument = instrument;
+                Ready = ready;
             }
-
-            GUILayout.EndVertical();
-            if (leftCount < names.Count)
-            {
-                GUILayout.Space(32f);
-                GUILayout.BeginVertical();
-                for (var i = leftCount; i < names.Count; i++)
-                {
-                    DrawPlayerNameRow(names[i], avatar, gap);
-                }
-
-                GUILayout.EndVertical();
-            }
-
-            GUILayout.EndHorizontal();
-            GUILayout.EndArea();
         }
 
-        private void DrawPlayerNameRow(string name, float avatar, float gap)
+        private List<HudPlayer> CurrentHudPlayers()
         {
-            GUILayout.BeginHorizontal(GUILayout.ExpandWidth(false));
-            var avatarRect = GUILayoutUtility.GetRect(
-                avatar,
-                avatar,
-                GUILayout.Width(avatar),
-                GUILayout.Height(avatar),
-                GUILayout.ExpandWidth(false));
-            if (Event.current.type == EventType.Repaint && avatarRect.width > 2f)
+            if (_currentSet != null && (_phase == "ready" || _phase == "score"))
             {
-                try
-                {
-                    var tex = YaqProfileAvatar.ForPlayer(name, PlayerIdFor(name));
-                    if (tex != null)
-                    {
-                        GUI.DrawTexture(avatarRect, tex, ScaleMode.ScaleToFit, true);
-                    }
-                    else if (_avatarInitialStyle != null)
-                    {
-                        GUI.Box(avatarRect, GUIContent.none);
-                        GUI.Label(avatarRect, InitialGlyph(name), _avatarInitialStyle);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    YargLogger.LogException(ex, "YAQ profile avatar draw failed");
-                }
+                return HudPlayersFromSet(_currentPlayers);
             }
 
-            GUILayout.Space(gap);
-            DrawFixedHudLabel(name ?? string.Empty, _playerNameStyle ?? _bodyStyle, avatar);
-            var icon = InstrumentIconFor(name);
-            if (icon != null)
-            {
-                GUILayout.Space(gap);
-                var iconRect = GUILayoutUtility.GetRect(
-                    avatar,
-                    avatar,
-                    GUILayout.Width(avatar),
-                    GUILayout.Height(avatar),
-                    GUILayout.ExpandWidth(false));
-                if (Event.current.type == EventType.Repaint && iconRect.width > 2f)
-                {
-                    DrawSprite(iconRect, icon);
-                }
-            }
-
-            GUILayout.EndHorizontal();
-            GUILayout.Space(8f);
+            return HudPlayersFromPreview(_preview?.players);
         }
 
-        private static void DrawFixedHudLabel(string text, GUIStyle style, float height)
+        private List<HudPlayer> NextHudPlayers()
         {
-            var content = new GUIContent(text ?? string.Empty);
-            var width = Mathf.Ceil(style.CalcSize(content).x);
-            GUILayout.Label(
-                content,
-                style,
-                GUILayout.Width(Mathf.Max(1f, width)),
-                GUILayout.Height(height),
-                GUILayout.ExpandWidth(false));
+            var featuredSetId = _currentSet != null && (_phase == "ready" || _phase == "score")
+                ? _currentSet.id
+                : _preview?.setId;
+
+            if (_preview != null &&
+                (!string.IsNullOrEmpty(_preview.songName) || !string.IsNullOrEmpty(_preview.songArtist)) &&
+                _preview.setId != featuredSetId)
+            {
+                return HudPlayersFromPreview(_preview.players);
+            }
+
+            return HudPlayersFromPreview(_preview?.following?.players);
+        }
+
+        private List<HudPlayer> HudPlayersFromSet(List<YaqSetPlayer> players)
+        {
+            var list = new List<HudPlayer>();
+            if (players == null) return list;
+            foreach (var player in players)
+            {
+                if (player == null || string.IsNullOrEmpty(player.name)) continue;
+                list.Add(new HudPlayer(
+                    player.name,
+                    player.id ?? player.slotId,
+                    player.instrument,
+                    PlayerIsReady(player.name, player.isBot)));
+            }
+
+            return list;
+        }
+
+        private List<HudPlayer> HudPlayersFromPreview(List<YaqPreviewPlayer> players)
+        {
+            var list = new List<HudPlayer>();
+            if (players == null) return list;
+            foreach (var player in players)
+            {
+                if (player == null || string.IsNullOrEmpty(player.name)) continue;
+                list.Add(new HudPlayer(
+                    player.name,
+                    player.id ?? player.slotId,
+                    player.instrument,
+                    PlayerIsReady(player.name, player.isBot)));
+            }
+
+            return list;
+        }
+
+        private bool PlayerIsReady(string name, bool isBot)
+        {
+            if (isBot) return true;
+            if (_phase == "ready" || _phase == "score") return true;
+            if (string.IsNullOrEmpty(name)) return false;
+
+            foreach (var profile in _venueProfiles.Values)
+            {
+                if (profile == null || profile.Name != name) continue;
+                var seated = PlayerContainer.GetPlayerFromProfile(profile);
+                if (seated != null && !seated.SittingOut) return true;
+            }
+
+            return false;
+        }
+
+        private void DrawPlayerPanel(Rect rect, List<HudPlayer> players)
+        {
+            if (rect.width < 16f || rect.height < 16f) return;
+
+            DrawRounded(rect, 18, PanelFill, PanelBorder, 3);
+            if (players == null || players.Count == 0) return;
+
+            const float pad = 16f;
+            const float cardH = 88f;
+            const float cardW = 248f;
+            const float gap = 14f;
+            var inner = new Rect(rect.x + pad, rect.y + pad, rect.width - pad * 2f, rect.height - pad * 2f);
+            if (inner.width < 8f || inner.height < 8f) return;
+
+            var perRow = Mathf.Max(1, Mathf.FloorToInt((inner.width + gap) / (cardW + gap)));
+            for (var i = 0; i < players.Count; i++)
+            {
+                var col = i % perRow;
+                var row = i / perRow;
+                var x = inner.x + col * (cardW + gap);
+                var y = inner.y + row * (cardH + gap);
+                if (y + cardH > inner.yMax + 1f) break;
+                DrawPlayerCard(new Rect(x, y, cardW, cardH), players[i]);
+            }
+        }
+
+        private void DrawPlayerCard(Rect rect, HudPlayer player)
+        {
+            const float readyH = 28f;
+            var topH = Mathf.Max(8f, rect.height - readyH);
+            DrawTwoToneRounded(rect, 14, topH, CardTeal, player.Ready ? ReadyGreen : ReadyRed, Color.clear, 0);
+
+            var avatar = 44f;
+            var icon = 40f;
+            var rowY = rect.y + (topH - avatar) * 0.5f;
+            var avatarRect = new Rect(rect.x + 12f, rowY, avatar, avatar);
+            DrawHudAvatar(avatarRect, player.Name, player.Id);
+
+            var nameStyle = _playerNameStyle ?? _bodyStyle;
+            var nameX = avatarRect.xMax + 10f;
+            var iconRect = new Rect(rect.xMax - 12f - icon, rect.y + (topH - icon) * 0.5f, icon, icon);
+            var nameRect = new Rect(nameX, rect.y, Mathf.Max(8f, iconRect.x - 8f - nameX), topH);
+            GUI.Label(nameRect, player.Name, nameStyle);
+            DrawInstrumentBadge(iconRect, player.Instrument);
+
+            var readyRect = new Rect(rect.x + 10f, rect.yMax - readyH, rect.width - 20f, readyH);
+            GUI.Label(
+                readyRect,
+                player.Ready ? "Ready" : "Ready ?",
+                _readyStyle);
+        }
+
+        private void DrawHudAvatar(Rect rect, string name, string id)
+        {
+            if (rect.width < 2f) return;
+            try
+            {
+                var tex = YaqProfileAvatar.ForPlayer(name, id);
+                if (tex != null)
+                {
+                    GUI.DrawTexture(rect, tex, ScaleMode.ScaleToFit, true);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                YargLogger.LogException(ex, "YAQ profile avatar draw failed");
+            }
+
+            DrawCircle(rect, new Color(0.12f, 0.2f, 0.26f, 0.95f));
+            if (_avatarInitialStyle != null)
+            {
+                GUI.Label(rect, InitialGlyph(name), _avatarInitialStyle);
+            }
+        }
+
+        private void DrawInstrumentBadge(Rect rect, string instrument)
+        {
+            if (rect.width < 4f) return;
+            DrawCircle(rect, Color.white);
+            var sprite = LoadInstrumentIcon(instrument);
+            if (sprite == null) return;
+
+            var inset = rect.width * 0.18f;
+            var iconRect = new Rect(rect.x + inset, rect.y + inset, rect.width - inset * 2f, rect.height - inset * 2f);
+            var prev = GUI.color;
+            GUI.color = new Color(0.08f, 0.1f, 0.12f, 1f);
+            DrawSprite(iconRect, sprite);
+            GUI.color = prev;
+        }
+
+        private void DrawPlayerChip(Rect rect, HudPlayer player)
+        {
+            var avatar = Mathf.Min(rect.height, 36f);
+            var avatarRect = new Rect(rect.x, rect.y + (rect.height - avatar) * 0.5f, avatar, avatar);
+            DrawHudAvatar(avatarRect, player.Name, player.Id);
+
+            var icon = avatar;
+            var iconRect = new Rect(rect.xMax - icon, avatarRect.y, icon, icon);
+            var nameRect = new Rect(
+                avatarRect.xMax + 8f,
+                rect.y,
+                Mathf.Max(8f, iconRect.x - 8f - avatarRect.xMax),
+                rect.height);
+            GUI.Label(nameRect, player.Name, _chipNameStyle ?? _playerNameStyle);
+            DrawInstrumentBadge(iconRect, player.Instrument);
         }
 
         private static void DrawSprite(Rect rect, Sprite sprite)
@@ -722,31 +825,6 @@ namespace YARG.YAQ
             }
 
             return name[0].ToString();
-        }
-
-        private string PlayerIdFor(string name)
-        {
-            var current = _currentPlayers?.Find(player => player != null && player.name == name);
-            if (current != null) return current.id ?? current.slotId;
-            var preview = _preview?.players?.Find(player => player != null && player.name == name);
-            return preview?.id ?? preview?.slotId;
-        }
-
-        private string InstrumentIdFor(string name)
-        {
-            var current = _currentPlayers?.Find(player => player != null && player.name == name);
-            if (!string.IsNullOrWhiteSpace(current?.instrument)) return current.instrument;
-
-            var preview = _preview?.players?.Find(player => player != null && player.name == name);
-            if (!string.IsNullOrWhiteSpace(preview?.instrument)) return preview.instrument;
-
-            var following = _preview?.following?.players?.Find(player => player != null && player.name == name);
-            return following?.instrument;
-        }
-
-        private Sprite InstrumentIconFor(string name)
-        {
-            return LoadInstrumentIcon(InstrumentIdFor(name));
         }
 
         private void PrefetchInstrumentIcons(IEnumerable<YaqPreviewPlayer> players)
@@ -836,32 +914,60 @@ namespace YARG.YAQ
             }
         }
 
-        private void DrawJoinQr(Rect captionRect, Rect qrRect)
+        private void DrawQrBlock(Rect rect)
         {
-            GUI.Label(captionRect, "SCAN TO JOIN", _qrCaptionStyle);
+            if (rect.width < 8f || rect.height < 8f) return;
+
+            FillRect(rect, QrYellow);
+            var captionH = Mathf.Min(28f, rect.height * 0.16f);
+            GUI.Label(
+                new Rect(rect.x, rect.y + 4f, rect.width, captionH),
+                "SCAN TO JOIN",
+                _qrCaptionStyle);
+
+            var pad = Mathf.Max(10f, rect.width * 0.08f);
+            var qrSize = Mathf.Min(rect.width, rect.height - captionH) - pad * 2f;
+            var qrRect = new Rect(
+                rect.x + (rect.width - qrSize) * 0.5f,
+                rect.y + captionH + (rect.height - captionH - qrSize) * 0.5f,
+                qrSize,
+                qrSize);
             if (_qrTexture != null)
             {
                 GUI.DrawTexture(qrRect, _qrTexture, ScaleMode.ScaleToFit);
             }
             else
             {
-                GUI.Box(qrRect, GUIContent.none);
+                FillRect(qrRect, Color.white);
             }
         }
 
-        private void DrawNextSong(Rect nextRect)
+        private void DrawNextBar(Rect nextRect)
         {
             if (nextRect.width < 8f || nextRect.height < 8f) return;
 
-            var hasNext = TryGetNextSong(out var title, out var artist, out var names);
-            var captionH = Mathf.Min(28f, nextRect.height * 0.22f);
-            GUI.Label(new Rect(nextRect.x, nextRect.y, nextRect.width, captionH), "UP NEXT", _nextCaptionStyle);
+            FillRect(nextRect, NextBarFill);
+
+            var pad = 20f;
+            var hasNext = TryGetNextSong(out var title, out var artist, out _);
+            var players = NextHudPlayers();
+            if (!hasNext && (_preview?.following == null))
+            {
+                players = new List<HudPlayer>();
+            }
+
+            var captionH = 22f;
+            var textW = Mathf.Max(80f, nextRect.width * 0.46f);
+            GUI.Label(
+                new Rect(nextRect.x + pad, nextRect.y + 8f, textW, captionH),
+                "UP NEXT",
+                _nextCaptionStyle);
 
             var body = new Rect(
-                nextRect.x,
-                nextRect.y + captionH,
-                nextRect.width,
-                Mathf.Max(1f, nextRect.height - captionH));
+                nextRect.x + pad,
+                nextRect.y + captionH + 6f,
+                textW,
+                Mathf.Max(1f, nextRect.height - captionH - 14f));
 
             if (!hasNext)
             {
@@ -871,34 +977,236 @@ namespace YARG.YAQ
 
             var hasTitle = !string.IsNullOrEmpty(title);
             var hasArtist = !string.IsNullOrEmpty(artist);
-            var namesH = names.Count > 0 ? Mathf.Min(28f, body.height * 0.28f) : 0f;
-            var songH = Mathf.Max(1f, body.height - namesH);
             if (hasTitle && hasArtist)
             {
-                var titleH = Mathf.Max(1f, songH * 0.58f);
+                var titleH = Mathf.Max(1f, body.height * 0.55f);
+                DrawFittedLabel(new Rect(body.x, body.y, body.width, titleH), title, _nextTitleStyle, 16);
                 DrawFittedLabel(
-                    new Rect(body.x, body.y, body.width, titleH),
-                    title,
-                    _nextTitleStyle,
-                    16);
-                DrawFittedLabel(
-                    new Rect(body.x, body.y + titleH, body.width, Mathf.Max(1f, songH - titleH)),
+                    new Rect(body.x, body.y + titleH, body.width, Mathf.Max(1f, body.height - titleH)),
                     artist,
                     _nextArtistStyle,
                     14);
             }
             else
             {
-                DrawFittedLabel(new Rect(body.x, body.y, body.width, songH), hasTitle ? title : artist, _nextTitleStyle, 16);
+                DrawFittedLabel(body, hasTitle ? title : artist, _nextTitleStyle, 16);
             }
 
-            if (names.Count > 0)
+            if (players.Count == 0) return;
+
+            var chipH = Mathf.Min(44f, nextRect.height - 20f);
+            var chipY = nextRect.y + (nextRect.height - chipH) * 0.5f;
+            var chipX = nextRect.x + pad + textW + 16f;
+            const float chipW = 210f;
+            for (var i = 0; i < players.Count; i++)
             {
-                DrawFittedLabel(
-                    new Rect(body.x, body.y + songH, body.width, namesH),
-                    string.Join("  ", names),
-                    _nextPlayersStyle,
-                    12);
+                var chip = new Rect(chipX + i * (chipW + 12f), chipY, chipW, chipH);
+                if (chip.xMax > nextRect.xMax - 8f) break;
+                DrawPlayerChip(chip, players[i]);
+            }
+        }
+
+        private static void FillRect(Rect rect, Color color)
+        {
+            var prev = GUI.color;
+            GUI.color = color;
+            GUI.DrawTexture(rect, Texture2D.whiteTexture);
+            GUI.color = prev;
+        }
+
+        private void DrawRounded(Rect rect, int radius, Color fill, Color border, int borderWidth)
+        {
+            if (Event.current.type != EventType.Repaint) return;
+            var tex = RoundedTexture(
+                Mathf.Max(8, Mathf.RoundToInt(rect.width)),
+                Mathf.Max(8, Mathf.RoundToInt(rect.height)),
+                radius,
+                fill,
+                border,
+                borderWidth);
+            if (tex != null) GUI.DrawTexture(rect, tex, ScaleMode.StretchToFill, true);
+        }
+
+        private void DrawTwoToneRounded(Rect rect, int radius, float splitY, Color top, Color bottom, Color border, int borderWidth)
+        {
+            if (Event.current.type != EventType.Repaint) return;
+            var tex = TwoToneRoundedTexture(
+                Mathf.Max(8, Mathf.RoundToInt(rect.width)),
+                Mathf.Max(8, Mathf.RoundToInt(rect.height)),
+                radius,
+                Mathf.Clamp(Mathf.RoundToInt(splitY), 1, Mathf.Max(1, Mathf.RoundToInt(rect.height) - 1)),
+                top,
+                bottom,
+                border,
+                borderWidth);
+            if (tex != null) GUI.DrawTexture(rect, tex, ScaleMode.StretchToFill, true);
+        }
+
+        private void DrawCircle(Rect rect, Color color)
+        {
+            var circle = WhiteCircle();
+            if (circle == null) return;
+            var prev = GUI.color;
+            GUI.color = color;
+            GUI.DrawTexture(rect, circle, ScaleMode.ScaleToFit, true);
+            GUI.color = prev;
+        }
+
+        private Texture2D WhiteCircle()
+        {
+            if (_whiteCircle != null) return _whiteCircle;
+            const int size = 64;
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false)
+            {
+                hideFlags = HideFlags.HideAndDontSave,
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+            var radius = (size - 1) * 0.5f;
+            var center = new Vector2(radius, radius);
+            for (var y = 0; y < size; y++)
+            {
+                for (var x = 0; x < size; x++)
+                {
+                    var d = Vector2.Distance(new Vector2(x, y), center);
+                    var a = Mathf.Clamp01(radius + 0.5f - d);
+                    tex.SetPixel(x, y, new Color(1f, 1f, 1f, a));
+                }
+            }
+
+            tex.Apply(false, false);
+            _whiteCircle = tex;
+            return tex;
+        }
+
+        private Texture2D RoundedTexture(int w, int h, int radius, Color fill, Color border, int borderWidth)
+        {
+            var key = $"r:{w}x{h}:{radius}:{borderWidth}:{ColorKey(fill)}:{ColorKey(border)}";
+            if (_hudShapes.TryGetValue(key, out var cached) && cached != null) return cached;
+            var tex = BuildRounded(w, h, radius, y => fill, border, borderWidth);
+            _hudShapes[key] = tex;
+            return tex;
+        }
+
+        private Texture2D TwoToneRoundedTexture(
+            int w,
+            int h,
+            int radius,
+            int splitY,
+            Color top,
+            Color bottom,
+            Color border,
+            int borderWidth)
+        {
+            var key = $"t:{w}x{h}:{radius}:{splitY}:{ColorKey(top)}:{ColorKey(bottom)}";
+            if (_hudShapes.TryGetValue(key, out var cached) && cached != null) return cached;
+            var tex = BuildRounded(w, h, radius, y => y < splitY ? top : bottom, border, borderWidth);
+            _hudShapes[key] = tex;
+            return tex;
+        }
+
+        private static string ColorKey(Color c)
+        {
+            return $"{c.r:0.00}{c.g:0.00}{c.b:0.00}{c.a:0.00}";
+        }
+
+        private static Texture2D BuildRounded(
+            int w,
+            int h,
+            int radius,
+            Func<int, Color> fillAtY,
+            Color border,
+            int borderWidth)
+        {
+            w = Mathf.Clamp(w, 8, 1024);
+            h = Mathf.Clamp(h, 8, 1024);
+            radius = Mathf.Clamp(radius, 0, Mathf.Min(w, h) / 2);
+            borderWidth = Mathf.Max(0, borderWidth);
+
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false)
+            {
+                hideFlags = HideFlags.HideAndDontSave,
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+
+            var r = radius + 0.5f;
+            var inner = Mathf.Max(0f, r - borderWidth);
+            for (var y = 0; y < h; y++)
+            {
+                var fill = fillAtY(h - 1 - y);
+                for (var x = 0; x < w; x++)
+                {
+                    var d = CornerDistance(x, y, w, h, radius);
+                    if (d > r)
+                    {
+                        tex.SetPixel(x, y, Color.clear);
+                        continue;
+                    }
+
+                    var alpha = Mathf.Clamp01(r - d);
+                    var onEdge = x < borderWidth || x >= w - borderWidth ||
+                                 y < borderWidth || y >= h - borderWidth;
+                    Color pixel;
+                    if (borderWidth > 0 && (d > inner || (d < 0.01f && onEdge)))
+                    {
+                        pixel = border;
+                    }
+                    else
+                    {
+                        pixel = fill;
+                    }
+
+                    pixel.a *= alpha;
+                    tex.SetPixel(x, y, pixel);
+                }
+            }
+
+            tex.Apply(false, false);
+            return tex;
+        }
+
+        private static float CornerDistance(int x, int y, int w, int h, int radius)
+        {
+            var cx = x;
+            var cy = y;
+            if (x < radius && y < radius)
+            {
+                cx = x;
+                cy = y;
+                return Vector2.Distance(new Vector2(cx, cy), new Vector2(radius, radius));
+            }
+
+            if (x >= w - radius && y < radius)
+            {
+                return Vector2.Distance(new Vector2(x, y), new Vector2(w - 1 - radius, radius));
+            }
+
+            if (x < radius && y >= h - radius)
+            {
+                return Vector2.Distance(new Vector2(x, y), new Vector2(radius, h - 1 - radius));
+            }
+
+            if (x >= w - radius && y >= h - radius)
+            {
+                return Vector2.Distance(new Vector2(x, y), new Vector2(w - 1 - radius, h - 1 - radius));
+            }
+
+            return 0f;
+        }
+
+        private void ClearHudShapes()
+        {
+            foreach (var tex in _hudShapes.Values)
+            {
+                if (tex != null) Destroy(tex);
+            }
+
+            _hudShapes.Clear();
+            if (_whiteCircle != null)
+            {
+                Destroy(_whiteCircle);
+                _whiteCircle = null;
             }
         }
 
@@ -932,6 +1240,8 @@ namespace YARG.YAQ
                 _playerNameStyle = new GUIStyle(_bodyStyle)
                 {
                     alignment = TextAnchor.MiddleLeft,
+                    fontSize = 24,
+                    fontStyle = FontStyle.Bold,
                     wordWrap = false,
                     clipping = TextClipping.Clip,
                     stretchWidth = false
@@ -954,8 +1264,26 @@ namespace YARG.YAQ
                 _qrCaptionStyle = new GUIStyle(_mutedStyle)
                 {
                     alignment = TextAnchor.MiddleCenter,
+                    fontSize = 16,
+                    fontStyle = FontStyle.Bold,
+                    normal = { textColor = new Color(0.9f, 0.95f, 0.35f) },
                     wordWrap = false,
                     clipping = TextClipping.Clip
+                };
+                _readyStyle = new GUIStyle(GUI.skin.label)
+                {
+                    alignment = TextAnchor.MiddleCenter,
+                    fontSize = 20,
+                    fontStyle = FontStyle.Bold,
+                    normal = { textColor = ReadyGlyph },
+                    wordWrap = false,
+                    clipping = TextClipping.Clip
+                };
+                _chipNameStyle = new GUIStyle(_playerNameStyle)
+                {
+                    fontSize = 20,
+                    fontStyle = FontStyle.Normal,
+                    normal = { textColor = Color.white }
                 };
             }
 
@@ -964,7 +1292,7 @@ namespace YARG.YAQ
             {
                 fontSize = 16,
                 fontStyle = FontStyle.Bold,
-                normal = { textColor = new Color(0.7f, 0.8f, 0.88f) },
+                normal = { textColor = new Color(0.85f, 0.95f, 1f) },
                 wordWrap = false,
                 clipping = TextClipping.Clip
             };
@@ -980,7 +1308,7 @@ namespace YARG.YAQ
             {
                 fontSize = 22,
                 fontStyle = FontStyle.Normal,
-                normal = { textColor = new Color(0.9f, 0.95f, 1f) },
+                normal = { textColor = NextArtistBlue },
                 wordWrap = false,
                 clipping = TextClipping.Clip
             };
