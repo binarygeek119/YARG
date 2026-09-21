@@ -45,6 +45,7 @@ namespace YARG.YAQ
         private GUIStyle _qrCaptionStyle;
         private GUIStyle _nextTitleStyle;
         private GUIStyle _nextPlayersStyle;
+        private GUIStyle _fittedDrawStyle;
         private readonly ConcurrentQueue<Action> _mainThread = new();
 
         private Texture2D _currentCover;
@@ -317,7 +318,7 @@ namespace YARG.YAQ
             var areaW = Mathf.Max(1f, screenW - pad * 2f);
             var areaH = Mathf.Max(1f, screenH - pad - bottomReserve);
 
-            var titleH = Mathf.Clamp(areaH * 0.16f, 56f, 88f);
+            var titleH = Mathf.Clamp(areaH * 0.18f, 72f, 110f);
             var nextH = Mathf.Clamp(areaH * 0.2f, 72f, 110f);
 
             var qrSize = Mathf.Min(qrMax, areaW * 0.2f, areaH * 0.42f);
@@ -336,7 +337,9 @@ namespace YARG.YAQ
             var captionY = Mathf.Max(areaY, qrY - captionH);
             var contentW = Mathf.Max(0f, qrX - gap - areaX);
 
-            var titleRect = new Rect(areaX, areaY, contentW, titleH);
+            // QR sits bottom-right; the header can use the full width so long
+            // titles scale instead of wrapping into the album-art column.
+            var titleRect = new Rect(areaX, areaY, areaW, titleH);
             var nextRect = new Rect(areaX, areaY + areaH - nextH, contentW, nextH);
 
             var midY = areaY + titleH + gap;
@@ -445,19 +448,54 @@ namespace YARG.YAQ
             return $"{title} — {artist}";
         }
 
+        /// <summary>
+        /// Draw a single-line label uniformly scaled down so the whole string
+        /// stays inside <paramref name="rect"/> (no wrap, no clipping).
+        /// </summary>
+        private void DrawUniformScaledLabel(Rect rect, string text, GUIStyle prototype)
+        {
+            if (string.IsNullOrEmpty(text) || prototype == null || rect.width < 1f || rect.height < 1f)
+            {
+                return;
+            }
+
+            _fittedDrawStyle ??= new GUIStyle(prototype);
+            _fittedDrawStyle.font = prototype.font;
+            _fittedDrawStyle.fontSize = prototype.fontSize;
+            _fittedDrawStyle.fontStyle = prototype.fontStyle;
+            _fittedDrawStyle.alignment = TextAnchor.MiddleLeft;
+            _fittedDrawStyle.normal.textColor = prototype.normal.textColor;
+            _fittedDrawStyle.padding = new RectOffset(0, 0, 0, 0);
+            _fittedDrawStyle.margin = new RectOffset(0, 0, 0, 0);
+            _fittedDrawStyle.wordWrap = false;
+            _fittedDrawStyle.clipping = TextClipping.Overflow;
+
+            var content = new GUIContent(text);
+            var size = _fittedDrawStyle.CalcSize(content);
+            size.x = Mathf.Max(size.x, 1f);
+            size.y = Mathf.Max(size.y, 1f);
+
+            var scale = Mathf.Min(1f, rect.width / size.x, rect.height / size.y);
+            var origin = new Vector2(
+                rect.x,
+                rect.y + (rect.height - size.y * scale) * 0.5f);
+
+            var saved = GUI.matrix;
+            GUIUtility.ScaleAroundPivot(new Vector2(scale, scale), origin);
+            GUI.Label(new Rect(origin.x, origin.y, size.x, size.y), content, _fittedDrawStyle);
+            GUI.matrix = saved;
+        }
+
         private void DrawCurrentHeader(Rect titleRect)
         {
-            GUILayout.BeginArea(titleRect);
             if (TryGetCurrentSong(out _, out var title, out var artist, out _))
             {
-                GUILayout.Label(FormatSongLine(title, artist), _titleStyle);
+                DrawUniformScaledLabel(titleRect, FormatSongLine(title, artist), _titleStyle);
             }
             else
             {
-                GUILayout.Label("Waiting for the next group…", _bodyStyle);
+                DrawUniformScaledLabel(titleRect, "Waiting for the next group…", _bodyStyle);
             }
-
-            GUILayout.EndArea();
         }
 
         private static void DrawAlbumArt(Rect rect, Texture2D texture)
@@ -520,17 +558,20 @@ namespace YARG.YAQ
 
         private void DrawNextSong(Rect nextRect)
         {
-            GUILayout.BeginArea(nextRect);
-            if (TryGetNextSong(out var title, out var artist, out var names))
-            {
-                GUILayout.Label(FormatSongLine(title, artist), _nextTitleStyle);
-                if (names.Count > 0)
-                {
-                    GUILayout.Label(string.Join("  ", names), _nextPlayersStyle);
-                }
-            }
+            if (!TryGetNextSong(out var title, out var artist, out var names)) return;
 
-            GUILayout.EndArea();
+            const float songH = 36f;
+            DrawUniformScaledLabel(
+                new Rect(nextRect.x, nextRect.y, nextRect.width, songH),
+                FormatSongLine(title, artist),
+                _nextTitleStyle);
+            if (names.Count > 0)
+            {
+                GUI.Label(
+                    new Rect(nextRect.x, nextRect.y + songH + 4f, nextRect.width, nextRect.height - songH - 4f),
+                    string.Join("  ", names),
+                    _nextPlayersStyle);
+            }
         }
 
         private void EnsureStyles()
@@ -541,8 +582,9 @@ namespace YARG.YAQ
                 {
                     fontSize = 42,
                     fontStyle = FontStyle.Bold,
+                    alignment = TextAnchor.MiddleLeft,
                     normal = { textColor = Color.white },
-                    wordWrap = true,
+                    wordWrap = false,
                     clipping = TextClipping.Clip
                 };
                 _bodyStyle = new GUIStyle(GUI.skin.label)
