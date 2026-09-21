@@ -1941,6 +1941,7 @@ namespace YARG.YAQ
                 case "settings.update":
                     ApplyEventFlags(msg["flags"]?.ToObject<EventFlags>());
                     ApplyAdsSeconds(msg["adsSeconds"]);
+                    ApplyAdsPlayFullSong(msg["adsPlayFullSong"]);
                     break;
                 case "profiles.setup":
                     ApplyVenueProfiles(

@@ -65,11 +65,21 @@ namespace YARG
         /// </summary>
         public static int AdsSeconds { get; private set; } = DefaultAdsSeconds;
 
+        /// <summary>
+        /// When true, ads holds each song for its full length and ignores <see cref="AdsSeconds"/>.
+        /// </summary>
+        public static bool AdsPlayFullSong { get; private set; }
+
         public static void SetAdsSeconds(int seconds)
         {
             if (seconds < MinAdsSeconds) seconds = MinAdsSeconds;
             if (seconds > MaxAdsSeconds) seconds = MaxAdsSeconds;
             AdsSeconds = seconds;
+        }
+
+        public static void SetAdsPlayFullSong(bool playFull)
+        {
+            AdsPlayFullSong = playFull;
         }
 
         public static bool StreamConnected =>

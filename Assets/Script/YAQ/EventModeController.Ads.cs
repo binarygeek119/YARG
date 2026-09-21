@@ -64,6 +64,19 @@ namespace YARG.YAQ
             }
         }
 
+        private void ApplyAdsPlayFullSong(JToken token)
+        {
+            if (token == null || token.Type == JTokenType.Null) return;
+            try
+            {
+                EventMode.SetAdsPlayFullSong(token.Value<bool>());
+            }
+            catch
+            {
+                // Ignore malformed payloads; keep the last good flag.
+            }
+        }
+
         internal void DrawAdsHud()
         {
             if (!EventMode.IsActive) return;
@@ -359,9 +372,20 @@ namespace YARG.YAQ
                     if (_adsArtAlpha < 1f) return;
                     _adsArtAlpha = 1f;
                     _adsArtPhase = AdsArtPhase.Hold;
-                    _adsHoldUntil = Time.unscaledTime + Mathf.Max(EventMode.MinAdsSeconds, EventMode.AdsSeconds);
+                    _adsHoldUntil = Time.unscaledTime + AdsHoldSeconds(_adsSong);
                     return;
             }
+        }
+
+        private static float AdsHoldSeconds(SongEntry song)
+        {
+            if (EventMode.AdsPlayFullSong && song != null)
+            {
+                var length = (float) song.SongLengthSeconds;
+                if (length >= EventMode.MinAdsSeconds) return length;
+            }
+
+            return Mathf.Max(EventMode.MinAdsSeconds, EventMode.AdsSeconds);
         }
 
         private static SongEntry PickAdsSong(SongEntry current)
