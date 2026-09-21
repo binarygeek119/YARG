@@ -650,8 +650,11 @@ namespace YARG.YAQ
 
         private static double AdsMusicVolume()
         {
-            if (EventMode.Flags.hotMic) return 0;
-            return SettingsManager.Settings?.PreviewVolume.Value ?? 0.25f;
+            var preview = SettingsManager.Settings?.PreviewVolume.Value ?? 0.25f;
+            // Hot mic stays live for talkback; keep a quiet bed so the ads song
+            // is still audible instead of going fully silent.
+            if (EventMode.Flags.hotMic) return preview * 0.25;
+            return preview;
         }
 
         private void FadeAdsMusic(float duration)
@@ -684,6 +687,11 @@ namespace YARG.YAQ
         {
             _adsAudioGeneration++;
             _adsAudioHash = null;
+            DisposeAdsMixer();
+        }
+
+        private void DisposeAdsMixer()
+        {
             if (_adsMixer == null) return;
             try
             {
@@ -697,13 +705,35 @@ namespace YARG.YAQ
             _adsMixer = null;
         }
 
+        private static double AdsAudioStartSeconds(SongEntry song, StemMixer mixer)
+        {
+            if (EventMode.AdsPlayFullSong || mixer == null || mixer.Length <= 0)
+            {
+                return 0;
+            }
+
+            var previewStart = song.PreviewStartSeconds;
+            if (previewStart >= 0 && previewStart < mixer.Length)
+            {
+                return previewStart;
+            }
+
+            // Same fallbacks as menu preview: skip the intro when the song is long enough.
+            if (mixer.Length > 50) return 20;
+            if (mixer.Length > 30) return (mixer.Length - 30) / 2;
+            return 0;
+        }
+
         private async UniTaskVoid LoadAdsAudioAsync(SongEntry song, string songHash, int generation)
         {
             StemMixer mixer = null;
             try
             {
                 var censor = SettingsManager.Settings?.CensorMatureContent.Value ?? false;
-                mixer = await UniTask.RunOnThreadPool(() => song.LoadPreviewAudio(1f, censor));
+                // Full stems, same path as the menu music player. Preview files are often
+                // shorter than PreviewStartSeconds, so seeking that stamp on them is silent.
+                mixer = await UniTask.RunOnThreadPool(() =>
+                    song.LoadAudio(1f, 0, censor, SongStem.Crowd));
             }
             catch (Exception ex)
             {
@@ -718,41 +748,43 @@ namespace YARG.YAQ
                     return;
                 }
 
-                if (_adsMixer != null)
-                {
-                    try
-                    {
-                        _adsMixer.Dispose();
-                    }
-                    catch
-                    {
-                        // Mixer may already be torn down with the audio engine.
-                    }
-
-                    _adsMixer = null;
-                }
-
+                DisposeAdsMixer();
                 _adsAudioHash = songHash;
                 _adsMixer = mixer;
-                if (_adsMixer == null) return;
-
-                var start = 0d;
-                if (!EventMode.AdsPlayFullSong && song.PreviewStartMilliseconds >= 0)
+                if (_adsMixer == null)
                 {
-                    start = Math.Max(0d, song.PreviewStartSeconds);
+                    YargLogger.LogFormatWarning("YAQ ads audio missing stems for {0}", (string) song.Name);
+                    return;
                 }
 
+                var start = AdsAudioStartSeconds(song, _adsMixer);
+                var volume = AdsMusicVolume();
                 try
                 {
                     _adsMixer.SetPosition(start);
-                    var volume = AdsMusicVolume();
-                    _adsMixer.SetVolume(volume);
+                    _adsMixer.SetVolume(0);
+                    var playResult = _adsMixer.Play();
+                    if (playResult != 0)
+                    {
+                        YargLogger.LogFormatWarning(
+                            "YAQ ads audio play failed ({0}) for {1}",
+                            playResult,
+                            (string) song.Name);
+                        StopAdsAudio();
+                        return;
+                    }
+
                     if (volume > 0.0001)
                     {
                         _adsMixer.FadeIn(volume, AdsArtFadeSeconds);
                     }
 
-                    _adsMixer.Play();
+                    YargLogger.LogFormatInfo(
+                        "YAQ ads audio playing {0} at {1:0.00}s (volume={2:0.00}{3})",
+                        (string) song.Name,
+                        start,
+                        volume,
+                        EventMode.Flags.hotMic ? ", hot mic duck" : string.Empty);
                 }
                 catch (Exception ex)
                 {
