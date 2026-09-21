@@ -10,9 +10,11 @@ using UnityEngine.AddressableAssets;
 using YARG.Core;
 using YARG.Core.Engine.Guitar;
 using YARG.Core.Game;
+using YARG.Core.Input;
 using YARG.Core.Logging;
 using YARG.Core.Song;
 using YARG.Helpers.Extensions;
+using YARG.Input;
 using YARG.Menu;
 using YARG.Menu.Main;
 using YARG.Menu.MusicLibrary;
@@ -41,6 +43,9 @@ namespace YARG.YAQ
         private string _phase = "idle";
         private string _status = "Connecting to YAQ…";
         private string _pendingSetId;
+        private readonly HashSet<string> _readyKeys = new(StringComparer.OrdinalIgnoreCase);
+        private string _readySetId;
+        private bool _launchQueued;
         private bool _librarySynced;
         private GUIStyle _titleStyle;
         private GUIStyle _artistStyle;
@@ -134,6 +139,7 @@ namespace YARG.YAQ
             }
 
             _bridge = new YaqBridgeClient();
+            InputManager.MenuInput += OnMenuReadyInput;
             _bridge.Connected += () => Enqueue(() =>
             {
                 _status = EventMode.Suspended
@@ -180,6 +186,7 @@ namespace YARG.YAQ
             _currentPlayers = new List<YaqSetPlayer>();
             _preview = new YaqQueuePreview();
             _phase = "idle";
+            ClearReadyState();
             _status = "YAQ stream off";
             ClearCovers();
             ClearQr();
@@ -218,6 +225,7 @@ namespace YARG.YAQ
             _currentSet = null;
             _currentPlayers = new List<YaqSetPlayer>();
             _phase = "idle";
+            ClearReadyState();
             _status = "Event Mode off (bridge still connected)";
             ClearCovers();
             RestoreVenueProfileNames();
@@ -239,6 +247,7 @@ namespace YARG.YAQ
 
         private void OnDestroy()
         {
+            InputManager.MenuInput -= OnMenuReadyInput;
             ClearCovers();
             ClearQr();
             ClearHudShapes();
@@ -273,6 +282,7 @@ namespace YARG.YAQ
             }
 
             EnsureHotMics();
+            EnableSeatedPlayerInputs();
 
             if (_qrTexture == null && Time.unscaledTime >= _nextQrRetryAt)
             {
@@ -578,13 +588,15 @@ namespace YARG.YAQ
         {
             public readonly string Name;
             public readonly string Id;
+            public readonly string SlotId;
             public readonly string Instrument;
             public readonly bool Ready;
 
-            public HudPlayer(string name, string id, string instrument, bool ready)
+            public HudPlayer(string name, string id, string slotId, string instrument, bool ready)
             {
                 Name = name ?? string.Empty;
                 Id = id;
+                SlotId = slotId;
                 Instrument = instrument;
                 Ready = ready;
             }
@@ -626,8 +638,9 @@ namespace YARG.YAQ
                 list.Add(new HudPlayer(
                     player.name,
                     player.id ?? player.slotId,
+                    player.slotId,
                     player.instrument,
-                    PlayerIsReady(player.name, player.isBot)));
+                    PlayerIsReady(player.id, player.slotId, player.name, player.isBot)));
             }
 
             return list;
@@ -643,27 +656,235 @@ namespace YARG.YAQ
                 list.Add(new HudPlayer(
                     player.name,
                     player.id ?? player.slotId,
+                    player.slotId,
                     player.instrument,
-                    PlayerIsReady(player.name, player.isBot)));
+                    PlayerIsReady(player.id, player.slotId, player.name, player.isBot)));
             }
 
             return list;
         }
 
-        private bool PlayerIsReady(string name, bool isBot)
+        internal static string ReadyBarLabel(bool ready)
+        {
+            return ready ? "Ready" : "Ready ?";
+        }
+
+        private bool PlayerIsReady(string id, string slotId, string name, bool isBot)
         {
             if (isBot) return true;
-            if (_phase == "ready" || _phase == "score") return true;
-            if (string.IsNullOrEmpty(name)) return false;
+            if (_phase is "playing" or "score") return true;
+            return HasReadyKey(id) || HasReadyKey(slotId) || HasReadyKey(name);
+        }
 
-            foreach (var profile in _venueProfiles.Values)
+        private bool HasReadyKey(string key)
+        {
+            return !string.IsNullOrEmpty(key) && _readyKeys.Contains(key);
+        }
+
+        private void BindReadySet(string setId)
+        {
+            if (string.IsNullOrEmpty(setId))
             {
-                if (profile == null || profile.Name != name) continue;
-                var seated = PlayerContainer.GetPlayerFromProfile(profile);
-                if (seated != null && !seated.SittingOut) return true;
+                ClearReadyState();
+                return;
+            }
+
+            if (string.Equals(_readySetId, setId, StringComparison.Ordinal)) return;
+
+            _readySetId = setId;
+            _readyKeys.Clear();
+            _launchQueued = false;
+        }
+
+        private void ClearReadyState()
+        {
+            _readySetId = null;
+            _readyKeys.Clear();
+            _launchQueued = false;
+        }
+
+        private void MarkPlayerReady(HudPlayer player)
+        {
+            if (!string.IsNullOrEmpty(player.Id)) _readyKeys.Add(player.Id);
+            if (!string.IsNullOrEmpty(player.SlotId)) _readyKeys.Add(player.SlotId);
+            if (!string.IsNullOrEmpty(player.Name)) _readyKeys.Add(player.Name);
+            YargLogger.LogFormatInfo("YAQ Event HUD ready: {0}", player.Name);
+        }
+
+        private bool AllFeaturedPlayersReady()
+        {
+            var players = CurrentHudPlayers();
+            if (players.Count == 0) return false;
+            foreach (var player in players)
+            {
+                if (!player.Ready) return false;
+            }
+
+            return true;
+        }
+
+        private void TryLaunchWhenAllReady()
+        {
+            if (_launchQueued) return;
+            if (!EventMode.IsActive) return;
+            if (_currentSet == null || _phase != "ready") return;
+            if (!AllFeaturedPlayersReady()) return;
+
+            _launchQueued = true;
+            _status = $"Ready: {_currentSet.songArtist} — {_currentSet.songName}";
+            YargLogger.LogFormatInfo(
+                "YAQ Event HUD all players ready — launching {0}",
+                _currentSet.songName);
+
+            if (GlobalVariables.Instance != null &&
+                GlobalVariables.Instance.CurrentScene != SceneIndex.Menu)
+            {
+                GlobalVariables.Instance.LoadScene(SceneIndex.Menu);
+            }
+
+            if (EventMode.Flags.openDifficultySelect)
+            {
+                StartCoroutine(OpenReadyWhenPossible());
+            }
+        }
+
+        private void OnMenuReadyInput(YargPlayer player, ref GameInput input)
+        {
+            if (!input.Button) return;
+            if ((MenuAction) input.Action != MenuAction.Green) return;
+            if (!EventMode.IsActive) return;
+            if (GlobalVariables.Instance == null ||
+                GlobalVariables.Instance.CurrentScene != SceneIndex.Event)
+            {
+                return;
+            }
+
+            if (_phase is "playing" or "score") return;
+
+            var players = CurrentHudPlayers();
+            if (players.Count == 0) return;
+
+            if (player == null)
+            {
+                HudPlayer? fallback = null;
+                var unready = 0;
+                foreach (var hud in players)
+                {
+                    if (hud.Ready) continue;
+                    unready++;
+                    fallback = hud;
+                }
+
+                if (unready == 1 && fallback.HasValue)
+                {
+                    MarkPlayerReady(fallback.Value);
+                    TryLaunchWhenAllReady();
+                }
+
+                return;
+            }
+
+            if (!TryMatchHudPlayer(player, players, out var matched)) return;
+
+            MarkPlayerReady(matched);
+            TryLaunchWhenAllReady();
+        }
+
+        private bool TryMatchHudPlayer(YargPlayer yargPlayer, List<HudPlayer> players, out HudPlayer match)
+        {
+            match = default;
+            var profile = yargPlayer?.Profile;
+            if (profile == null || players == null || players.Count == 0) return false;
+
+            var slotId = SlotIdForProfile(profile);
+            foreach (var hud in players)
+            {
+                if (string.IsNullOrEmpty(slotId)) continue;
+                if (string.Equals(hud.SlotId, slotId, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(hud.Id, slotId, StringComparison.OrdinalIgnoreCase))
+                {
+                    match = hud;
+                    return true;
+                }
+            }
+
+            foreach (var hud in players)
+            {
+                if (string.IsNullOrEmpty(profile.Name)) continue;
+                if (string.Equals(hud.Name, profile.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    match = hud;
+                    return true;
+                }
+            }
+
+            var instrument = profile.CurrentInstrument;
+            HudPlayer? unique = null;
+            var matches = 0;
+            foreach (var hud in players)
+            {
+                if (!TryParseHudInstrument(hud.Instrument, out var parsed) || parsed != instrument)
+                {
+                    continue;
+                }
+
+                unique = hud;
+                matches++;
+            }
+
+            if (matches == 1 && unique.HasValue)
+            {
+                match = unique.Value;
+                return true;
+            }
+
+            foreach (var hud in players)
+            {
+                if (hud.Ready) continue;
+                if (!TryParseHudInstrument(hud.Instrument, out var parsed) || parsed != instrument)
+                {
+                    continue;
+                }
+
+                match = hud;
+                return true;
             }
 
             return false;
+        }
+
+        private string SlotIdForProfile(YargProfile profile)
+        {
+            if (profile == null) return null;
+            foreach (var pair in _venueProfiles)
+            {
+                if (pair.Value == profile) return pair.Key;
+            }
+
+            return null;
+        }
+
+        private void EnableSeatedPlayerInputs()
+        {
+            if (GlobalVariables.Instance == null ||
+                GlobalVariables.Instance.CurrentScene != SceneIndex.Event)
+            {
+                return;
+            }
+
+            try
+            {
+                foreach (var seated in PlayerContainer.Players)
+                {
+                    if (seated == null || seated.SittingOut) continue;
+                    if (seated.Profile?.IsBot == true) continue;
+                    seated.EnableInputs();
+                }
+            }
+            catch
+            {
+                // Bindings may not be ready during early boot
+            }
         }
 
         private void DrawPlayerPanel(Rect rect, List<HudPlayer> players)
@@ -702,10 +923,7 @@ namespace YARG.YAQ
             DrawPackedPlayer(row, player, 44f, 40f, _playerNameStyle ?? _bodyStyle);
 
             var readyRect = new Rect(rect.x + 10f, rect.yMax - readyH, rect.width - 20f, readyH);
-            GUI.Label(
-                readyRect,
-                player.Ready ? "Ready" : "Ready ?",
-                _readyStyle);
+            GUI.Label(readyRect, ReadyBarLabel(player.Ready), _readyStyle);
         }
 
         private void DrawHudAvatar(Rect rect, string name, string id)
@@ -1423,6 +1641,10 @@ namespace YARG.YAQ
                     PrefetchInstrumentIcons(_preview?.players);
                     PrefetchInstrumentIcons(_preview?.following?.players);
                     RequestCover(true, _preview?.songHash);
+                    if (_currentSet == null || _phase == "idle")
+                    {
+                        BindReadySet(_preview?.setId);
+                    }
                     break;
                 case "set.prepare":
                     if (EventMode.Suspended)
@@ -1435,7 +1657,7 @@ namespace YARG.YAQ
                     break;
                 case "set.launch":
                     if (EventMode.Suspended) break;
-                    EnsureDifficultySelectOpen();
+                    TryLaunchWhenAllReady();
                     break;
                 case "settings.update":
                     ApplyEventFlags(msg["flags"]?.ToObject<EventFlags>());
@@ -1563,29 +1785,17 @@ namespace YARG.YAQ
             _currentPlayers = players;
             RememberSetPortraits(players);
             PrefetchInstrumentIcons(players);
+            BindReadySet(set.id);
             _phase = "ready";
-            _status = $"Ready: {set.songArtist} — {set.songName}";
+            _status = AllFeaturedPlayersReady()
+                ? $"Ready: {set.songArtist} — {set.songName}"
+                : $"Waiting for players to ready: {set.songArtist} — {set.songName}";
             RequestCover(false, set.songHash);
-
-            if (GlobalVariables.Instance.CurrentScene != SceneIndex.Menu)
-            {
-                GlobalVariables.Instance.LoadScene(SceneIndex.Menu);
-            }
-
-            if (EventMode.Flags.openDifficultySelect)
-            {
-                StartCoroutine(OpenReadyWhenPossible());
-            }
+            EnableSeatedPlayerInputs();
+            TryLaunchWhenAllReady();
 
             SendState("ready");
             _bridge.Send(new { type = "ready", setId = set.id });
-        }
-
-        private void EnsureDifficultySelectOpen()
-        {
-            if (!EventMode.Flags.openDifficultySelect) return;
-            if (_currentSet == null) return;
-            StartCoroutine(OpenReadyWhenPossible());
         }
 
         private System.Collections.IEnumerator OpenReadyWhenPossible()
@@ -2075,6 +2285,8 @@ namespace YARG.YAQ
             _currentPlayers = new List<YaqSetPlayer>();
             RestoreVenueProfileNames();
             ClearCover(false);
+            ClearReadyState();
+            BindReadySet(_preview?.setId);
         }
 
         public void NotifyPlaying()
