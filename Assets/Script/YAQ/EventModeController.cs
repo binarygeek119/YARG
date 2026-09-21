@@ -49,7 +49,9 @@ namespace YARG.YAQ
         private GUIStyle _mutedStyle;
         private GUIStyle _qrCaptionStyle;
         private GUIStyle _nextTitleStyle;
+        private GUIStyle _nextArtistStyle;
         private GUIStyle _nextPlayersStyle;
+        private GUIStyle _nextCaptionStyle;
         private GUIStyle _fitScratchStyle;
         private readonly ConcurrentQueue<Action> _mainThread = new();
 
@@ -342,7 +344,7 @@ namespace YARG.YAQ
             var areaH = Mathf.Max(1f, screenH - pad - bottomReserve);
 
             var titleH = Mathf.Clamp(areaH * 0.2f, 80f, 128f);
-            var nextH = Mathf.Clamp(areaH * 0.2f, 72f, 110f);
+            var nextH = Mathf.Clamp(areaH * 0.24f, 96f, 168f);
 
             var qrSize = Mathf.Min(qrMax, areaW * 0.2f, areaH * 0.42f);
             qrSize = Mathf.Clamp(qrSize, 96f, qrMax);
@@ -437,25 +439,31 @@ namespace YARG.YAQ
             artist = null;
             names = null;
 
-            if (_currentSet == null)
+            var featuredSetId = _currentSet != null && (_phase == "ready" || _phase == "score")
+                ? _currentSet.id
+                : _preview?.setId;
+
+            if (_preview != null &&
+                (!string.IsNullOrEmpty(_preview.songName) || !string.IsNullOrEmpty(_preview.songArtist)) &&
+                _preview.setId != featuredSetId)
             {
-                return false;
+                title = _preview.songName;
+                artist = _preview.songArtist;
+                names = NamesFrom(_preview.players?.Select(player => player?.name));
+                return true;
             }
 
-            if (string.IsNullOrEmpty(_preview?.songName) && string.IsNullOrEmpty(_preview?.songArtist))
+            var following = _preview?.following;
+            if (following != null &&
+                (!string.IsNullOrEmpty(following.songName) || !string.IsNullOrEmpty(following.songArtist)))
             {
-                return false;
+                title = following.songName;
+                artist = following.songArtist;
+                names = NamesFrom(following.players?.Select(player => player?.name));
+                return true;
             }
 
-            if (!string.IsNullOrEmpty(_preview?.setId) && _preview.setId == _currentSet.id)
-            {
-                return false;
-            }
-
-            title = _preview.songName;
-            artist = _preview.songArtist;
-            names = NamesFrom(_preview.players?.Select(player => player?.name));
-            return true;
+            return false;
         }
 
         private static List<string> NamesFrom(IEnumerable<string> names)
@@ -689,20 +697,54 @@ namespace YARG.YAQ
 
         private void DrawNextSong(Rect nextRect)
         {
-            if (!TryGetNextSong(out var title, out var artist, out var names)) return;
+            if (nextRect.width < 8f || nextRect.height < 8f) return;
 
-            var line = FormatSongLine(title, artist);
-            var titleH = Mathf.Max(1f, nextRect.height * 0.55f);
-            var titleArea = new Rect(nextRect.x, nextRect.y, nextRect.width, titleH);
-            DrawFittedLabel(titleArea, line, _nextTitleStyle, 14);
+            var hasNext = TryGetNextSong(out var title, out var artist, out var names);
+            var captionH = Mathf.Min(28f, nextRect.height * 0.22f);
+            GUI.Label(new Rect(nextRect.x, nextRect.y, nextRect.width, captionH), "UP NEXT", _nextCaptionStyle);
+
+            var body = new Rect(
+                nextRect.x,
+                nextRect.y + captionH,
+                nextRect.width,
+                Mathf.Max(1f, nextRect.height - captionH));
+
+            if (!hasNext)
+            {
+                DrawFittedLabel(body, "Waiting for the next song…", _mutedStyle, 14);
+                return;
+            }
+
+            var hasTitle = !string.IsNullOrEmpty(title);
+            var hasArtist = !string.IsNullOrEmpty(artist);
+            var namesH = names.Count > 0 ? Mathf.Min(28f, body.height * 0.28f) : 0f;
+            var songH = Mathf.Max(1f, body.height - namesH);
+            if (hasTitle && hasArtist)
+            {
+                var titleH = Mathf.Max(1f, songH * 0.58f);
+                DrawFittedLabel(
+                    new Rect(body.x, body.y, body.width, titleH),
+                    title,
+                    _nextTitleStyle,
+                    16);
+                DrawFittedLabel(
+                    new Rect(body.x, body.y + titleH, body.width, Mathf.Max(1f, songH - titleH)),
+                    artist,
+                    _nextArtistStyle,
+                    14);
+            }
+            else
+            {
+                DrawFittedLabel(new Rect(body.x, body.y, body.width, songH), hasTitle ? title : artist, _nextTitleStyle, 16);
+            }
+
             if (names.Count > 0)
             {
-                var namesArea = new Rect(
-                    nextRect.x,
-                    nextRect.y + titleH,
-                    nextRect.width,
-                    Mathf.Max(1f, nextRect.height - titleH));
-                DrawFittedLabel(namesArea, string.Join("  ", names), _nextPlayersStyle, 12);
+                DrawFittedLabel(
+                    new Rect(body.x, body.y + songH, body.width, namesH),
+                    string.Join("  ", names),
+                    _nextPlayersStyle,
+                    12);
             }
         }
 
@@ -762,7 +804,15 @@ namespace YARG.YAQ
                 };
             }
 
-            if (_nextTitleStyle != null) return;
+            if (_nextCaptionStyle != null && _nextTitleStyle != null) return;
+            _nextCaptionStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 16,
+                fontStyle = FontStyle.Bold,
+                normal = { textColor = new Color(0.7f, 0.8f, 0.88f) },
+                wordWrap = false,
+                clipping = TextClipping.Clip
+            };
             _nextTitleStyle = new GUIStyle(GUI.skin.label)
             {
                 fontSize = 32,
@@ -771,11 +821,19 @@ namespace YARG.YAQ
                 wordWrap = false,
                 clipping = TextClipping.Clip
             };
-            _nextPlayersStyle = new GUIStyle(GUI.skin.label)
+            _nextArtistStyle = new GUIStyle(GUI.skin.label)
             {
                 fontSize = 22,
+                fontStyle = FontStyle.Normal,
+                normal = { textColor = new Color(0.9f, 0.95f, 1f) },
+                wordWrap = false,
+                clipping = TextClipping.Clip
+            };
+            _nextPlayersStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 20,
                 normal = { textColor = new Color(0.85f, 0.9f, 0.95f) },
-                wordWrap = true,
+                wordWrap = false,
                 clipping = TextClipping.Clip
             };
         }

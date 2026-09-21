@@ -167,6 +167,16 @@ namespace YARG.YAQ
         public string songName;
         public string songArtist;
         public List<YaqPreviewPlayer> players = new();
+        public YaqFollowingSong following;
+    }
+
+    [Serializable]
+    public class YaqFollowingSong
+    {
+        public string songHash;
+        public string songName;
+        public string songArtist;
+        public List<YaqPreviewPlayer> players = new();
     }
 
     [Serializable]
