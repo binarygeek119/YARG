@@ -685,14 +685,18 @@ namespace YARG.YAQ
         {
             if (string.IsNullOrEmpty(setId))
             {
-                ClearReadyState();
                 return;
             }
 
             if (string.Equals(_readySetId, setId, StringComparison.Ordinal)) return;
 
+            var keepKeys = string.IsNullOrEmpty(_readySetId);
             _readySetId = setId;
-            _readyKeys.Clear();
+            if (!keepKeys)
+            {
+                _readyKeys.Clear();
+            }
+
             _launchQueued = false;
         }
 
@@ -746,6 +750,26 @@ namespace YARG.YAQ
             {
                 StartCoroutine(OpenReadyWhenPossible());
             }
+        }
+
+        private void HandleRemotePlayerReady(JObject msg)
+        {
+            if (!EventMode.IsActive) return;
+            if (_phase is "playing" or "score") return;
+
+            var setId = msg.Value<string>("setId");
+            if (!string.IsNullOrEmpty(setId)) BindReadySet(setId);
+
+            var id = msg.Value<string>("playerId") ?? msg.Value<string>("id");
+            var slotId = msg.Value<string>("slotId");
+            var name = msg.Value<string>("name");
+            if (string.IsNullOrEmpty(id) && string.IsNullOrEmpty(slotId) && string.IsNullOrEmpty(name))
+            {
+                return;
+            }
+
+            MarkPlayerReady(new HudPlayer(name, id, slotId, msg.Value<string>("instrument"), false));
+            TryLaunchWhenAllReady();
         }
 
         private void OnMenuReadyInput(YargPlayer player, ref GameInput input)
@@ -1643,7 +1667,8 @@ namespace YARG.YAQ
                     RequestCover(true, _preview?.songHash);
                     if (_currentSet == null || _phase == "idle")
                     {
-                        BindReadySet(_preview?.setId);
+                        if (string.IsNullOrEmpty(_preview?.setId)) ClearReadyState();
+                        else BindReadySet(_preview.setId);
                     }
                     break;
                 case "set.prepare":
@@ -1658,6 +1683,10 @@ namespace YARG.YAQ
                 case "set.launch":
                     if (EventMode.Suspended) break;
                     TryLaunchWhenAllReady();
+                    break;
+                case "player.ready":
+                    if (EventMode.Suspended) break;
+                    HandleRemotePlayerReady(msg);
                     break;
                 case "settings.update":
                     ApplyEventFlags(msg["flags"]?.ToObject<EventFlags>());
