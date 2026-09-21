@@ -41,12 +41,10 @@ namespace YARG.YAQ
         private string _pendingSetId;
         private bool _librarySynced;
         private GUIStyle _titleStyle;
-        private GUIStyle _artistStyle;
         private GUIStyle _bodyStyle;
         private GUIStyle _mutedStyle;
         private GUIStyle _qrCaptionStyle;
         private GUIStyle _nextTitleStyle;
-        private GUIStyle _nextArtistStyle;
         private GUIStyle _nextPlayersStyle;
         private GUIStyle _avatarInitialStyle;
         private GUIStyle _playerNameStyle;
@@ -356,7 +354,9 @@ namespace YARG.YAQ
             var captionY = Mathf.Max(areaY, qrY - captionH);
             var contentW = Mathf.Max(0f, qrX - gap - areaX);
 
-            var titleRect = new Rect(areaX, areaY, contentW, titleH);
+            // QR sits bottom-right; the header can use the full width so long
+            // titles scale instead of wrapping into the album-art column.
+            var titleRect = new Rect(areaX, areaY, areaW, titleH);
             var nextRect = new Rect(areaX, areaY + areaH - nextH, contentW, nextH);
 
             var midY = areaY + titleH + gap;
@@ -514,149 +514,60 @@ namespace YARG.YAQ
             return new HudPlayer(id, displayName, cacheKey, httpUrl);
         }
 
+        private static string FormatSongLine(string title, string artist)
+        {
+            if (string.IsNullOrEmpty(title)) return artist ?? string.Empty;
+            if (string.IsNullOrEmpty(artist)) return title;
+            return $"{title} — {artist}";
+        }
+
         /// <summary>
-        /// Shrink a label until it fits in <paramref name="width"/> × <paramref name="height"/>.
-        /// Prefers a single line; wraps only when even <paramref name="minSize"/> is too wide.
+        /// Draw a single-line label uniformly scaled down so the whole string
+        /// stays inside <paramref name="rect"/> (no wrap, no clipping).
         /// </summary>
-        internal static int FitFontSizeToRect(
-            GUIStyle prototype,
-            string text,
-            float width,
-            float height,
-            int minSize,
-            out bool wordWrap)
-        {
-            wordWrap = false;
-            if (prototype == null || string.IsNullOrEmpty(text) || width < 1f || height < 1f)
-            {
-                return minSize;
-            }
-
-            var style = new GUIStyle(prototype)
-            {
-                wordWrap = false,
-                clipping = TextClipping.Overflow
-            };
-            var content = new GUIContent(text);
-            var innerW = Mathf.Max(1f, width - style.padding.horizontal);
-            var innerH = Mathf.Max(1f, height - style.padding.vertical);
-            var maxSize = Mathf.Max(minSize, prototype.fontSize);
-
-            var best = FitFontSize(style, content, innerW, innerH, minSize, maxSize, wrap: false);
-            style.fontSize = best;
-            if (style.CalcSize(content).x <= innerW)
-            {
-                return best;
-            }
-
-            wordWrap = true;
-            return FitFontSize(style, content, innerW, innerH, minSize, maxSize, wrap: true);
-        }
-
-        private static int FitFontSize(
-            GUIStyle style,
-            GUIContent content,
-            float innerW,
-            float innerH,
-            int minSize,
-            int maxSize,
-            bool wrap)
-        {
-            style.wordWrap = wrap;
-            var lo = minSize;
-            var hi = maxSize;
-            var best = minSize;
-            while (lo <= hi)
-            {
-                var mid = (lo + hi) / 2;
-                style.fontSize = mid;
-                bool fits;
-                if (wrap)
-                {
-                    fits = style.CalcHeight(content, innerW) <= innerH;
-                }
-                else
-                {
-                    var size = style.CalcSize(content);
-                    fits = size.x <= innerW && size.y <= innerH;
-                }
-                if (fits)
-                {
-                    best = mid;
-                    lo = mid + 1;
-                }
-                else
-                {
-                    hi = mid - 1;
-                }
-            }
-
-            return best;
-        }
-
-        private void DrawFittedLabel(Rect rect, string text, GUIStyle prototype, int minSize)
+        private void DrawUniformScaledLabel(Rect rect, string text, GUIStyle prototype)
         {
             if (string.IsNullOrEmpty(text) || prototype == null || rect.width < 1f || rect.height < 1f)
             {
                 return;
             }
 
-            var fontSize = FitFontSizeToRect(prototype, text, rect.width, rect.height, minSize, out var wrap);
             _fittedDrawStyle ??= new GUIStyle(prototype);
             _fittedDrawStyle.font = prototype.font;
+            _fittedDrawStyle.fontSize = prototype.fontSize;
             _fittedDrawStyle.fontStyle = prototype.fontStyle;
-            _fittedDrawStyle.alignment = prototype.alignment;
+            _fittedDrawStyle.alignment = TextAnchor.MiddleLeft;
             _fittedDrawStyle.normal.textColor = prototype.normal.textColor;
-            _fittedDrawStyle.padding = prototype.padding;
-            _fittedDrawStyle.fontSize = fontSize;
-            _fittedDrawStyle.wordWrap = wrap;
-            _fittedDrawStyle.clipping = TextClipping.Clip;
-            GUI.Label(rect, text, _fittedDrawStyle);
-        }
+            _fittedDrawStyle.padding = new RectOffset(0, 0, 0, 0);
+            _fittedDrawStyle.margin = new RectOffset(0, 0, 0, 0);
+            _fittedDrawStyle.wordWrap = false;
+            _fittedDrawStyle.clipping = TextClipping.Overflow;
 
-        private void DrawScaledTitleArtist(
-            Rect rect,
-            string title,
-            string artist,
-            GUIStyle titleStyle,
-            GUIStyle artistStyle,
-            int minTitle,
-            int minArtist)
-        {
-            var hasTitle = !string.IsNullOrEmpty(title);
-            var hasArtist = !string.IsNullOrEmpty(artist);
-            if (!hasTitle && !hasArtist) return;
+            var content = new GUIContent(text);
+            var size = _fittedDrawStyle.CalcSize(content);
+            size.x = Mathf.Max(size.x, 1f);
+            size.y = Mathf.Max(size.y, 1f);
 
-            if (hasTitle && hasArtist)
-            {
-                const float gap = 2f;
-                var titleH = rect.height * 0.62f;
-                var artistH = Mathf.Max(1f, rect.height - titleH - gap);
-                DrawFittedLabel(new Rect(rect.x, rect.y, rect.width, titleH), title, titleStyle, minTitle);
-                DrawFittedLabel(
-                    new Rect(rect.x, rect.y + titleH + gap, rect.width, artistH),
-                    artist,
-                    artistStyle,
-                    minArtist);
-                return;
-            }
+            var scale = Mathf.Min(1f, rect.width / size.x, rect.height / size.y);
+            var origin = new Vector2(
+                rect.x,
+                rect.y + (rect.height - size.y * scale) * 0.5f);
 
-            DrawFittedLabel(
-                rect,
-                hasTitle ? title : artist,
-                hasTitle ? titleStyle : artistStyle,
-                hasTitle ? minTitle : minArtist);
+            var saved = GUI.matrix;
+            GUIUtility.ScaleAroundPivot(new Vector2(scale, scale), origin);
+            GUI.Label(new Rect(origin.x, origin.y, size.x, size.y), content, _fittedDrawStyle);
+            GUI.matrix = saved;
         }
 
         private void DrawCurrentHeader(Rect titleRect)
         {
             if (TryGetCurrentSong(out _, out var title, out var artist, out _))
             {
-                DrawScaledTitleArtist(titleRect, title, artist, _titleStyle, _artistStyle, 16, 14);
+                DrawUniformScaledLabel(titleRect, FormatSongLine(title, artist), _titleStyle);
             }
             else
             {
-                DrawFittedLabel(titleRect, "Waiting for the next group…", _bodyStyle, 16);
+                DrawUniformScaledLabel(titleRect, "Waiting for the next group…", _bodyStyle);
             }
         }
 
@@ -746,14 +657,10 @@ namespace YARG.YAQ
             const float nameGap = 8f;
             const float nameWidth = 160f;
             var songH = Mathf.Clamp(nextRect.height - avatarSize - 8f, 32f, 56f);
-            DrawScaledTitleArtist(
+            DrawUniformScaledLabel(
                 new Rect(nextRect.x, nextRect.y, nextRect.width, songH),
-                title,
-                artist,
-                _nextTitleStyle,
-                _nextArtistStyle,
-                14,
-                12);
+                FormatSongLine(title, artist),
+                _nextTitleStyle);
 
             var x = nextRect.x;
             var y = nextRect.y + songH + 6f;
@@ -778,14 +685,6 @@ namespace YARG.YAQ
                     fontStyle = FontStyle.Bold,
                     alignment = TextAnchor.MiddleLeft,
                     normal = { textColor = Color.white },
-                    wordWrap = false,
-                    clipping = TextClipping.Clip
-                };
-                _artistStyle = new GUIStyle(GUI.skin.label)
-                {
-                    fontSize = 26,
-                    alignment = TextAnchor.MiddleLeft,
-                    normal = { textColor = new Color(0.82f, 0.88f, 0.94f) },
                     wordWrap = false,
                     clipping = TextClipping.Clip
                 };
@@ -832,14 +731,6 @@ namespace YARG.YAQ
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleLeft,
                 normal = { textColor = Color.white },
-                wordWrap = false,
-                clipping = TextClipping.Clip
-            };
-            _nextArtistStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 20,
-                alignment = TextAnchor.MiddleLeft,
-                normal = { textColor = new Color(0.82f, 0.88f, 0.94f) },
                 wordWrap = false,
                 clipping = TextClipping.Clip
             };
