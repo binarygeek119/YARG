@@ -659,15 +659,28 @@ namespace YARG.YAQ
             }
 
             GUILayout.Space(gap);
-            GUILayout.Label(name ?? string.Empty, _playerNameStyle ?? _bodyStyle, GUILayout.Height(avatar));
+            DrawFixedHudLabel(name ?? string.Empty, _playerNameStyle ?? _bodyStyle, avatar);
             var instrument = InstrumentLabelFor(name);
             if (!string.IsNullOrEmpty(instrument))
             {
                 GUILayout.Space(gap);
-                GUILayout.Label(instrument, _instrumentStyle ?? _mutedStyle, GUILayout.Height(avatar));
+                DrawFixedHudLabel(instrument, _instrumentStyle ?? _mutedStyle, avatar);
             }
+            GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
             GUILayout.Space(8f);
+        }
+
+        private static void DrawFixedHudLabel(string text, GUIStyle style, float height)
+        {
+            var content = new GUIContent(text ?? string.Empty);
+            var width = Mathf.Ceil(style.CalcSize(content).x);
+            GUILayout.Label(
+                content,
+                style,
+                GUILayout.Width(Mathf.Max(1f, width)),
+                GUILayout.Height(height),
+                GUILayout.ExpandWidth(false));
         }
 
         private static string InitialGlyph(string name)
@@ -692,9 +705,19 @@ namespace YARG.YAQ
         private string InstrumentLabelFor(string name)
         {
             var current = _currentPlayers?.Find(player => player != null && player.name == name);
-            if (current != null) return InstrumentLabel(current.instrument);
+            if (!string.IsNullOrWhiteSpace(current?.instrument))
+            {
+                return InstrumentLabel(current.instrument);
+            }
+
             var preview = _preview?.players?.Find(player => player != null && player.name == name);
-            return InstrumentLabel(preview?.instrument);
+            if (!string.IsNullOrWhiteSpace(preview?.instrument))
+            {
+                return InstrumentLabel(preview.instrument);
+            }
+
+            var following = _preview?.following?.players?.Find(player => player != null && player.name == name);
+            return InstrumentLabel(following?.instrument);
         }
 
         internal static string InstrumentLabel(string instrument)
@@ -817,7 +840,8 @@ namespace YARG.YAQ
                 {
                     alignment = TextAnchor.MiddleLeft,
                     wordWrap = false,
-                    clipping = TextClipping.Clip
+                    clipping = TextClipping.Clip,
+                    stretchWidth = false
                 };
                 _instrumentStyle = new GUIStyle(_bodyStyle)
                 {
@@ -826,7 +850,8 @@ namespace YARG.YAQ
                     fontStyle = FontStyle.Bold,
                     normal = { textColor = new Color(0.72f, 0.82f, 0.9f) },
                     wordWrap = false,
-                    clipping = TextClipping.Clip
+                    clipping = TextClipping.Clip,
+                    stretchWidth = false
                 };
                 _avatarInitialStyle = new GUIStyle(_bodyStyle)
                 {
