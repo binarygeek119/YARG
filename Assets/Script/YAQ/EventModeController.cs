@@ -836,6 +836,8 @@ namespace YARG.YAQ
                 return;
             }
 
+            SitOutMissingParts(GlobalVariables.State.CurrentSong);
+
             var anyonePlaying = false;
             try
             {
@@ -2077,6 +2079,8 @@ namespace YARG.YAQ
                 SyncTestBots(song);
             }
 
+            SitOutMissingParts(song);
+
             GlobalVariables.State.CurrentSong = song;
             GlobalVariables.State.ShowSongs.Clear();
             GlobalVariables.State.ShowSongs.Add(song);
@@ -2425,7 +2429,7 @@ namespace YARG.YAQ
             foreach (var (instrument, label) in TestBotParts)
             {
                 if (humans.Any(human => OccupiesTestPart(human, instrument))) continue;
-                if (!SongHasTestPart(song, instrument)) continue;
+                if (!SongHasPart(song, instrument)) continue;
 
                 var name = TestBotPrefix + label;
                 var profile = PlayerContainer.Profiles.FirstOrDefault(p => p.Name == name && p.IsBot)
@@ -2461,7 +2465,23 @@ namespace YARG.YAQ
             }
         }
 
-        private static bool SongHasTestPart(SongEntry song, Instrument instrument)
+        private void SitOutMissingParts(SongEntry song)
+        {
+            if (song == null) return;
+            foreach (var player in PlayerContainer.Players)
+            {
+                if (player == null || player.SittingOut) continue;
+                var instrument = player.Profile.CurrentInstrument;
+                if (SongHasPart(song, instrument)) continue;
+                player.SittingOut = true;
+                YargLogger.LogFormatInfo(
+                    "YAQ sitting out {0} on {1}: song has no part",
+                    player.Profile.Name,
+                    instrument);
+            }
+        }
+
+        internal static bool SongHasPart(SongEntry song, Instrument instrument)
         {
             if (song == null) return true;
             try
@@ -2470,10 +2490,23 @@ namespace YARG.YAQ
                 return instrument switch
                 {
                     Instrument.Vocals => song.HasInstrument(Instrument.Harmony),
+                    Instrument.Harmony => song.HasInstrument(Instrument.Vocals),
                     Instrument.FourLaneDrums =>
                         song.HasInstrument(Instrument.ProDrums) ||
                         song.HasInstrument(Instrument.FiveLaneDrums) ||
                         song.HasInstrument(Instrument.EliteDrums),
+                    Instrument.ProDrums =>
+                        song.HasInstrument(Instrument.FourLaneDrums) ||
+                        song.HasInstrument(Instrument.FiveLaneDrums) ||
+                        song.HasInstrument(Instrument.EliteDrums),
+                    Instrument.FiveLaneDrums =>
+                        song.HasInstrument(Instrument.FourLaneDrums) ||
+                        song.HasInstrument(Instrument.ProDrums) ||
+                        song.HasInstrument(Instrument.EliteDrums),
+                    Instrument.EliteDrums =>
+                        song.HasInstrument(Instrument.FourLaneDrums) ||
+                        song.HasInstrument(Instrument.ProDrums) ||
+                        song.HasInstrument(Instrument.FiveLaneDrums),
                     _ => false
                 };
             }

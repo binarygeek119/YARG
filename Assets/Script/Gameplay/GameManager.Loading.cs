@@ -480,6 +480,16 @@ namespace YARG.Gameplay
                     {
                         continue;
                     }
+
+                    if (!player.IsReplay &&
+                        !EventModeController.SongHasPart(Song, player.Profile.CurrentInstrument))
+                    {
+                        YargLogger.LogFormatInfo(
+                            "Skipping player {0} on {1}: song has no part",
+                            player.Profile.Name,
+                            player.Profile.CurrentInstrument);
+                        continue;
+                    }
                     index++;
 
                     if (!player.IsReplay)
