@@ -15,6 +15,7 @@ namespace YARG.YAQ
         private const float AdsIdleEmptySeconds = 60f;
         private const float SceneFadeSeconds = 0.45f;
         private const float AdsArtFadeSeconds = 0.55f;
+        private const float AdsReturnSongFadeSeconds = 20f;
 
         private enum SceneFadePhase
         {
@@ -50,6 +51,8 @@ namespace YARG.YAQ
         private float _adsArtT;
         private float _adsHoldUntil;
         private bool _adsSlideshowActive;
+        private bool _adsReturningToEvent;
+        private float _adsReturnStartAlpha;
 
         private void ApplyAdsSeconds(JToken token)
         {
@@ -103,13 +106,14 @@ namespace YARG.YAQ
                 artSize,
                 artSize);
 
+            var songAlpha = Mathf.Clamp01(_adsArtAlpha);
             var prev = GUI.color;
-            GUI.color = new Color(1f, 1f, 1f, Mathf.Clamp01(_adsArtAlpha));
+            GUI.color = new Color(1f, 1f, 1f, songAlpha);
             DrawAdsAlbumArt(artRect);
             GUI.color = prev;
 
             DrawScrollingHorizontalGradient(barRect, NextBarDark, NextBarLight);
-            if (_adsSong == null) return;
+            if (_adsSong == null || songAlpha <= 0.001f) return;
 
             var innerPad = 24f;
             var inner = new Rect(
@@ -121,6 +125,7 @@ namespace YARG.YAQ
             var artist = (string) _adsSong.Artist;
             var hasTitle = !string.IsNullOrEmpty(title);
             var hasArtist = !string.IsNullOrEmpty(artist);
+            GUI.color = new Color(1f, 1f, 1f, songAlpha);
             if (hasTitle && hasArtist)
             {
                 var titleH = Mathf.Max(1f, inner.height * 0.55f);
@@ -141,6 +146,8 @@ namespace YARG.YAQ
             {
                 DrawFittedLabel(inner, hasTitle ? title : artist, _nextTitleStyle, 16, TextAnchor.MiddleCenter);
             }
+
+            GUI.color = prev;
         }
 
         internal void DrawSceneFadeOverlay()
@@ -188,11 +195,15 @@ namespace YARG.YAQ
                 _queueEmptySince = -1f;
                 if (scene == SceneIndex.Ads)
                 {
-                    FadeToScene(SceneIndex.Event);
+                    TickAdsReturnToEvent();
                 }
                 else
                 {
                     StopAdsSlideshow();
+                    if (_sceneFade != SceneFadePhase.None && _sceneFadeDest == SceneIndex.Ads)
+                    {
+                        FadeToScene(SceneIndex.Event);
+                    }
                 }
 
                 return;
@@ -212,12 +223,49 @@ namespace YARG.YAQ
 
             if (scene != SceneIndex.Ads) return;
 
+            if (_adsReturningToEvent)
+            {
+                _adsReturningToEvent = false;
+                _adsArtPhase = AdsArtPhase.FadeIn;
+                _adsArtT = Mathf.Clamp01(_adsArtAlpha);
+            }
+
             if (!_adsSlideshowActive)
             {
                 StartAdsSlideshow();
             }
 
             TickAdsSlideshow();
+        }
+
+        private void TickAdsReturnToEvent()
+        {
+            if (_sceneFade != SceneFadePhase.None && _sceneFadeDest == SceneIndex.Event)
+            {
+                return;
+            }
+
+            if (!_adsReturningToEvent)
+            {
+                _adsReturningToEvent = true;
+                _adsArtPhase = AdsArtPhase.Idle;
+                _adsArtT = 0f;
+                _adsReturnStartAlpha = Mathf.Clamp01(_adsArtAlpha);
+            }
+
+            if (_adsReturnStartAlpha <= 0.001f)
+            {
+                _adsArtAlpha = 0f;
+                FadeToScene(SceneIndex.Event);
+                return;
+            }
+
+            _adsArtT += Time.unscaledDeltaTime / AdsReturnSongFadeSeconds;
+            _adsArtAlpha = Mathf.Lerp(_adsReturnStartAlpha, 0f, Mathf.Clamp01(_adsArtT));
+            if (_adsArtAlpha > 0.001f) return;
+
+            _adsArtAlpha = 0f;
+            FadeToScene(SceneIndex.Event);
         }
 
         private bool QueueHasWork()
@@ -319,6 +367,7 @@ namespace YARG.YAQ
         private void StartAdsSlideshow()
         {
             _adsSlideshowActive = true;
+            _adsReturningToEvent = false;
             _adsSong = PickAdsSong(null);
             _adsArtAlpha = 0f;
             _adsArtPhase = AdsArtPhase.FadeIn;
@@ -329,8 +378,13 @@ namespace YARG.YAQ
 
         private void StopAdsSlideshow()
         {
-            if (!_adsSlideshowActive && _adsSong == null && _adsCover == null) return;
+            if (!_adsSlideshowActive && _adsSong == null && _adsCover == null && !_adsReturningToEvent)
+            {
+                return;
+            }
+
             _adsSlideshowActive = false;
+            _adsReturningToEvent = false;
             _adsSong = null;
             _adsArtPhase = AdsArtPhase.Idle;
             _adsArtAlpha = 0f;
