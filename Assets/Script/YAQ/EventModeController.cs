@@ -1051,10 +1051,10 @@ namespace YARG.YAQ
             DrawRounded(rect, 18, PanelFill, PanelBorder, 3);
             if (players == null || players.Count == 0) return;
 
-            const float pad = 16f;
-            const float cardH = 88f;
-            const float cardW = 248f;
-            const float gap = 14f;
+            const float pad = 12f;
+            const float cardH = 66f;
+            const float cardW = 190f;
+            const float gap = 10f;
             var inner = new Rect(rect.x + pad, rect.y + pad, rect.width - pad * 2f, rect.height - pad * 2f);
             if (inner.width < 8f || inner.height < 8f) return;
 
@@ -1072,19 +1072,19 @@ namespace YARG.YAQ
 
         private void DrawPlayerCard(Rect rect, HudPlayer player)
         {
-            const float readyH = 28f;
+            const float readyH = 22f;
             var topH = Mathf.Max(8f, rect.height - readyH);
-            DrawTwoToneRounded(rect, 14, topH, CardTeal, player.Ready ? ReadyGreen : ReadyRed, Color.clear, 0);
+            DrawTwoToneRounded(rect, 10, topH, CardTeal, player.Ready ? ReadyGreen : ReadyRed, Color.clear, 0);
 
-            var row = new Rect(rect.x + 12f, rect.y, rect.width - 24f, topH);
-            DrawPackedPlayer(row, player, 44f, 40f, _playerNameStyle ?? _bodyStyle);
+            var row = new Rect(rect.x + 8f, rect.y, rect.width - 16f, topH);
+            DrawPackedPlayer(row, player, 32f, 28f, _chipNameStyle ?? _playerNameStyle ?? _bodyStyle);
 
-            var readyRect = new Rect(rect.x + 10f, rect.yMax - readyH, rect.width - 20f, readyH);
+            var readyRect = new Rect(rect.x + 8f, rect.yMax - readyH, rect.width - 16f, readyH);
             var readyLabel = ReadyBarLabel(player.Ready);
             if (_readyStyle != null)
             {
                 _readyStyle.fontSize = FontSizeToFit(
-                    _readyStyle, readyLabel, readyRect.width, readyRect.height, 11, 20);
+                    _readyStyle, readyLabel, readyRect.width, readyRect.height, 10, 16);
             }
             GUI.Label(readyRect, readyLabel, _readyStyle);
         }
