@@ -13,6 +13,7 @@ namespace YARG
         public bool showUpNextHud = true;
         public bool skipMainMenu = true;
         public bool openDifficultySelect = true;
+        public bool addTestBots = false;
 
         public static EventFlags Defaults => new();
 
@@ -23,6 +24,7 @@ namespace YARG
             showUpNextHud = other.showUpNextHud;
             skipMainMenu = other.skipMainMenu;
             openDifficultySelect = other.openDifficultySelect;
+            addTestBots = other.addTestBots;
         }
     }
 
