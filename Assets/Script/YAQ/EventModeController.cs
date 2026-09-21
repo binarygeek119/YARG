@@ -85,7 +85,8 @@ namespace YARG.YAQ
         private static readonly Color ReadyGlyph = new(0.95f, 0.93f, 0.28f, 1f);
         private static readonly Color NextBarDark = new(0.42f, 0.02f, 0.07f, 1f);
         private static readonly Color NextBarLight = new(0.98f, 0.30f, 0.36f, 1f);
-        private static readonly Color QrYellow = new(0.79f, 0.64f, 0.10f, 1f);
+        private static readonly Color QrGoldDark = new(0.45f, 0.32f, 0.04f, 1f);
+        private static readonly Color QrGoldLight = new(0.96f, 0.84f, 0.32f, 1f);
         private static readonly Color NextArtistBlue = new(0.45f, 0.72f, 0.95f, 1f);
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -915,7 +916,7 @@ namespace YARG.YAQ
         {
             if (rect.width < 8f || rect.height < 8f) return;
 
-            FillRect(rect, QrYellow);
+            DrawDiagonalGradient(rect, QrGoldDark, QrGoldLight);
             var captionH = Mathf.Min(28f, rect.height * 0.16f);
             GUI.Label(
                 new Rect(rect.x, rect.y + 4f, rect.width, captionH),
@@ -1032,6 +1033,13 @@ namespace YARG.YAQ
             if (tex != null) GUI.DrawTexture(rect, tex, ScaleMode.StretchToFill, false);
         }
 
+        private void DrawDiagonalGradient(Rect rect, Color bottomRight, Color topLeft)
+        {
+            if (Event.current.type != EventType.Repaint) return;
+            var tex = DiagonalGradientTexture(bottomRight, topLeft);
+            if (tex != null) GUI.DrawTexture(rect, tex, ScaleMode.StretchToFill, false);
+        }
+
         private Texture2D HorizontalGradientTexture(Color left, Color right)
         {
             var key = $"hg:{ColorKey(left)}:{ColorKey(right)}";
@@ -1047,6 +1055,36 @@ namespace YARG.YAQ
             for (var x = 0; x < width; x++)
             {
                 tex.SetPixel(x, 0, Color.Lerp(left, right, x / (width - 1f)));
+            }
+
+            tex.Apply(false, false);
+            _hudShapes[key] = tex;
+            return tex;
+        }
+
+        private Texture2D DiagonalGradientTexture(Color bottomRight, Color topLeft)
+        {
+            var key = $"dg:{ColorKey(bottomRight)}:{ColorKey(topLeft)}";
+            if (_hudShapes.TryGetValue(key, out var cached) && cached != null) return cached;
+
+            const int size = 64;
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false)
+            {
+                hideFlags = HideFlags.HideAndDontSave,
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+            var last = size - 1f;
+            for (var y = 0; y < size; y++)
+            {
+                var v = y / last;
+                for (var x = 0; x < size; x++)
+                {
+                    var u = x / last;
+                    // u=1,v=0 bottom-right; u=0,v=1 top-left. Texture y=0 is bottom.
+                    var t = Mathf.Clamp01(((1f - u) + v) * 0.5f);
+                    tex.SetPixel(x, y, Color.Lerp(bottomRight, topLeft, t));
+                }
             }
 
             tex.Apply(false, false);
