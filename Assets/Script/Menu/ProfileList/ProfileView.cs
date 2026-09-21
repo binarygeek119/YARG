@@ -107,6 +107,14 @@ namespace YARG.Menu.ProfileList
             if (taken)
             {
                 var player = PlayerContainer.GetPlayerFromProfile(profile);
+                if (player == null)
+                {
+                    _connectGroup.SetActive(true);
+                    _disconnectGroup.SetActive(false);
+                    _profilePicture.sprite = profile.IsBot ? _profileBotSprite : _profileGenericSprite;
+                    return;
+                }
+
                 int index = PlayerContainer.GetPlayerIndex(player);
 
                 // Disable the transition when changing interactability to prevent weird fades
