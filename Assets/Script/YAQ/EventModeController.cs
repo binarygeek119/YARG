@@ -89,7 +89,6 @@ namespace YARG.YAQ
         private static readonly Color CardTeal = new(0.07f, 0.55f, 0.56f, 1f);
         private static readonly Color ReadyGreen = new(0.20f, 0.78f, 0.32f, 1f);
         private static readonly Color ReadyRed = new(0.86f, 0.12f, 0.20f, 1f);
-        private static readonly Color ReadyGlyph = new(0.95f, 0.93f, 0.28f, 1f);
         private static readonly Color NextBarDark = new(0.42f, 0.02f, 0.07f, 1f);
         private static readonly Color NextBarLight = new(0.98f, 0.30f, 0.36f, 1f);
         private static readonly Color QrGoldDark = new(0.45f, 0.32f, 0.04f, 1f);
@@ -1622,7 +1621,7 @@ namespace YARG.YAQ
                     alignment = TextAnchor.MiddleCenter,
                     fontSize = 20,
                     fontStyle = FontStyle.Bold,
-                    normal = { textColor = ReadyGlyph },
+                    normal = { textColor = Color.white },
                     wordWrap = false,
                     clipping = TextClipping.Clip
                 };
