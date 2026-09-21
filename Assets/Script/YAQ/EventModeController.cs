@@ -205,6 +205,7 @@ namespace YARG.YAQ
             _status = "YAQ stream off";
             ClearCovers();
             ClearAdsCover();
+            StopAnnouncement();
             ClearQr();
             ClearHudShapes();
             YaqProfileAvatar.ClearCache();
@@ -269,6 +270,7 @@ namespace YARG.YAQ
             InputManager.MenuInput -= OnMenuReadyInput;
             ClearCovers();
             ClearAdsCover();
+            StopAnnouncement();
             ClearQr();
             ClearHudShapes();
             YaqProfileAvatar.ClearCache();
@@ -294,6 +296,7 @@ namespace YARG.YAQ
             }
 
             TickAds();
+            TickAnnouncements();
 
             if (!EventMode.Enabled) return;
 
@@ -1949,6 +1952,9 @@ namespace YARG.YAQ
                     ApplyEventFlags(msg["flags"]?.ToObject<EventFlags>());
                     ApplyAdsSeconds(msg["adsSeconds"]);
                     ApplyAdsPlayFullSong(msg["adsPlayFullSong"]);
+                    break;
+                case "announcement.play":
+                    HandleAnnouncementPlay(msg);
                     break;
                 case "profiles.setup":
                     ApplyVenueProfiles(

@@ -1,0 +1,190 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using Cysharp.Threading.Tasks;
+using Newtonsoft.Json.Linq;
+using UnityEngine;
+using YARG.Core.Audio;
+using YARG.Core.Logging;
+using YARG.Settings;
+
+namespace YARG.YAQ
+{
+    public partial class EventModeController
+    {
+        private readonly Queue<string> _announcementQueue = new();
+        private StemMixer _announcementMixer;
+        private int _announcementGeneration;
+        private bool _adsPausedForAnnouncement;
+
+        private void HandleAnnouncementPlay(JObject msg)
+        {
+            var id = msg.Value<string>("id");
+            if (string.IsNullOrEmpty(id)) return;
+            QueueOrPlayAnnouncement(id);
+        }
+
+        private void QueueOrPlayAnnouncement(string id)
+        {
+            var scene = GlobalVariables.Instance?.CurrentScene;
+            if (scene is SceneIndex.Gameplay or SceneIndex.Score)
+            {
+                if (!_announcementQueue.Contains(id))
+                {
+                    _announcementQueue.Enqueue(id);
+                }
+
+                YargLogger.LogFormatInfo("YAQ announcement queued until Event/Ads: {0}", id);
+                return;
+            }
+
+            PlayAnnouncement(id);
+        }
+
+        private void TickAnnouncements()
+        {
+            var scene = GlobalVariables.Instance?.CurrentScene;
+            var venueIdle = scene is SceneIndex.Event or SceneIndex.Ads or SceneIndex.Menu;
+            if (_announcementMixer != null)
+            {
+                if (_adsMixer != null && scene == SceneIndex.Ads)
+                {
+                    _adsMixer.Pause();
+                    _adsPausedForAnnouncement = true;
+                }
+
+                return;
+            }
+
+            if (_adsPausedForAnnouncement && _adsMixer != null && scene == SceneIndex.Ads)
+            {
+                _adsPausedForAnnouncement = false;
+                try
+                {
+                    _adsMixer.Play();
+                }
+                catch
+                {
+                    // Mixer may have been replaced while the announcement played.
+                }
+            }
+
+            if (!venueIdle || _announcementQueue.Count == 0) return;
+            PlayAnnouncement(_announcementQueue.Dequeue());
+        }
+
+        private void PlayAnnouncement(string id)
+        {
+            LoadAnnouncementAsync(id, ++_announcementGeneration).Forget();
+        }
+
+        private void StopAnnouncement()
+        {
+            _announcementGeneration++;
+            _announcementQueue.Clear();
+            DisposeAnnouncementMixer();
+        }
+
+        private void DisposeAnnouncementMixer()
+        {
+            if (_announcementMixer == null) return;
+            try
+            {
+                _announcementMixer.Dispose();
+            }
+            catch
+            {
+                // Audio engine may already have torn the mixer down.
+            }
+
+            _announcementMixer = null;
+        }
+
+        private static string AnnouncementApiUrl(string wsUrl, string id)
+        {
+            var escaped = Uri.EscapeDataString(id ?? string.Empty);
+            if (Uri.TryCreate(wsUrl, UriKind.Absolute, out var uri))
+            {
+                var scheme = uri.Scheme == "wss" ? "https" : "http";
+                return $"{scheme}://{uri.Authority}/api/messages/{escaped}/audio";
+            }
+
+            return $"http://127.0.0.1:3000/api/messages/{escaped}/audio";
+        }
+
+        private async UniTaskVoid LoadAnnouncementAsync(string id, int generation)
+        {
+            byte[] bytes = null;
+            try
+            {
+                var url = AnnouncementApiUrl(EventMode.YaqWebSocketUrl, id);
+                bytes = await UniTask.RunOnThreadPool(() =>
+                {
+                    using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+                    var response = client.GetAsync(url).GetAwaiter().GetResult();
+                    if (!response.IsSuccessStatusCode) return null;
+                    return response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
+                });
+            }
+            catch (Exception ex)
+            {
+                YargLogger.LogFormatWarning("YAQ announcement fetch failed: {0}", ex.Message);
+            }
+
+            Enqueue(() =>
+            {
+                if (generation != _announcementGeneration) return;
+                if (bytes == null || bytes.Length < 44)
+                {
+                    YargLogger.LogFormatWarning("YAQ announcement audio missing for {0}", id);
+                    return;
+                }
+
+                DisposeAnnouncementMixer();
+                try
+                {
+                    var volume = SettingsManager.Settings?.PreviewVolume.Value ?? 0.5f;
+                    if (volume < 0.2f) volume = 0.5f;
+                    var stream = new MemoryStream(bytes, writable: false);
+                    _announcementMixer = GlobalAudioHandler.LoadCustomFile(
+                        "yaq-announcement",
+                        stream,
+                        1f,
+                        volume,
+                        false,
+                        SongStem.Song);
+                    if (_announcementMixer == null)
+                    {
+                        YargLogger.LogWarning("YAQ announcement mixer failed");
+                        return;
+                    }
+
+                    _announcementMixer.SongEnd += OnAnnouncementEnded;
+                    if (_adsMixer != null)
+                    {
+                        _adsMixer.Pause();
+                        _adsPausedForAnnouncement = true;
+                    }
+
+                    _announcementMixer.Play();
+                    YargLogger.LogFormatInfo("YAQ announcement playing {0}", id);
+                }
+                catch (Exception ex)
+                {
+                    YargLogger.LogFormatWarning("YAQ announcement play failed: {0}", ex.Message);
+                    DisposeAnnouncementMixer();
+                }
+            });
+        }
+
+        private void OnAnnouncementEnded()
+        {
+            Enqueue(() =>
+            {
+                DisposeAnnouncementMixer();
+            });
+        }
+    }
+}
