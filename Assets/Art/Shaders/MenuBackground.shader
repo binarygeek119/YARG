@@ -2,9 +2,9 @@ Shader "Unlit/MenuBackground"
 {
     Properties
     {
-        _Color_SideA      ("Color Side A",     Color) = (0.000, 0.859, 0.992, 1)
-        _Color_SideB      ("Color Side B",     Color) = (0.929, 0.188, 0.125, 1)
-        _Color_Background ("Color Background", Color) = (0.000, 0.043, 0.098, 1)
+        _Color_SideA      ("Color Side A",     Color) = (0.184, 0.827, 0.635, 1)
+        _Color_SideB      ("Color Side B",     Color) = (0.941, 0.706, 0.161, 1)
+        _Color_Background ("Color Background", Color) = (0.027, 0.063, 0.094, 1)
 
         _Point_Strength   ("Point Strength", float) = 1.5
 
