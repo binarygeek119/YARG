@@ -80,6 +80,8 @@ namespace YARG.YAQ
         private readonly Dictionary<string, Sprite> _instrumentIcons = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, Texture2D> _instrumentIconTex = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, Texture2D> _hudShapes = new();
+        private Texture2D _qrScrollTex;
+        private Color[] _qrScrollPixels;
         private Texture2D _whiteCircle;
 
         private static readonly Color PanelFill = new(0.04f, 0.09f, 0.14f, 0.94f);
@@ -1158,7 +1160,7 @@ namespace YARG.YAQ
         {
             if (rect.width < 8f || rect.height < 8f) return;
 
-            DrawDiagonalGradient(rect, QrGoldDark, QrGoldLight);
+            DrawScrollingDiagonalGradient(rect, QrGoldDark, QrGoldLight);
             var captionH = Mathf.Min(28f, rect.height * 0.16f);
             GUI.Label(
                 new Rect(rect.x, rect.y + 4f, rect.width, captionH),
@@ -1279,11 +1281,48 @@ namespace YARG.YAQ
             GUI.DrawTextureWithTexCoords(rect, tex, new Rect(shift, 0f, 1f, 1f));
         }
 
-        private void DrawDiagonalGradient(Rect rect, Color bottomRight, Color topLeft)
+        private void DrawScrollingDiagonalGradient(Rect rect, Color bottomRight, Color topLeft)
         {
             if (Event.current.type != EventType.Repaint) return;
-            var tex = DiagonalGradientTexture(bottomRight, topLeft);
-            if (tex != null) GUI.DrawTexture(rect, tex, ScaleMode.StretchToFill, false);
+            var tex = EnsureQrScrollTexture();
+            if (tex == null) return;
+
+            const int size = 64;
+            const float period = 3.5f;
+            var phase = Mathf.Repeat(Time.unscaledTime / period, 1f);
+            var last = size - 1f;
+            var i = 0;
+            for (var y = 0; y < size; y++)
+            {
+                var v = y / last;
+                for (var x = 0; x < size; x++)
+                {
+                    var u = x / last;
+                    // s=0 bottom-right, s=1 top-left. Phase moves the wash toward top-left.
+                    var s = ((1f - u) + v) * 0.5f;
+                    var t = 0.5f - 0.5f * Mathf.Cos((s - phase) * 2f * Mathf.PI);
+                    _qrScrollPixels[i++] = Color.Lerp(bottomRight, topLeft, t);
+                }
+            }
+
+            tex.SetPixels(_qrScrollPixels);
+            tex.Apply(false, false);
+            GUI.DrawTexture(rect, tex, ScaleMode.StretchToFill, false);
+        }
+
+        private Texture2D EnsureQrScrollTexture()
+        {
+            if (_qrScrollTex != null) return _qrScrollTex;
+
+            const int size = 64;
+            _qrScrollTex = new Texture2D(size, size, TextureFormat.RGBA32, false)
+            {
+                hideFlags = HideFlags.HideAndDontSave,
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+            _qrScrollPixels = new Color[size * size];
+            return _qrScrollTex;
         }
 
         private Texture2D LoopingHorizontalGradientTexture(Color left, Color right)
@@ -1303,36 +1342,6 @@ namespace YARG.YAQ
                 var u = x / (float) width;
                 var t = 0.5f - 0.5f * Mathf.Cos(u * 2f * Mathf.PI);
                 tex.SetPixel(x, 0, Color.Lerp(left, right, t));
-            }
-
-            tex.Apply(false, false);
-            _hudShapes[key] = tex;
-            return tex;
-        }
-
-        private Texture2D DiagonalGradientTexture(Color bottomRight, Color topLeft)
-        {
-            var key = $"dg:{ColorKey(bottomRight)}:{ColorKey(topLeft)}";
-            if (_hudShapes.TryGetValue(key, out var cached) && cached != null) return cached;
-
-            const int size = 64;
-            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false)
-            {
-                hideFlags = HideFlags.HideAndDontSave,
-                filterMode = FilterMode.Bilinear,
-                wrapMode = TextureWrapMode.Clamp
-            };
-            var last = size - 1f;
-            for (var y = 0; y < size; y++)
-            {
-                var v = y / last;
-                for (var x = 0; x < size; x++)
-                {
-                    var u = x / last;
-                    // u=1,v=0 bottom-right; u=0,v=1 top-left. Texture y=0 is bottom.
-                    var t = Mathf.Clamp01(((1f - u) + v) * 0.5f);
-                    tex.SetPixel(x, y, Color.Lerp(bottomRight, topLeft, t));
-                }
             }
 
             tex.Apply(false, false);
@@ -1535,6 +1544,12 @@ namespace YARG.YAQ
             }
 
             _instrumentIconTex.Clear();
+            if (_qrScrollTex != null)
+            {
+                Destroy(_qrScrollTex);
+                _qrScrollTex = null;
+                _qrScrollPixels = null;
+            }
             if (_whiteCircle != null)
             {
                 Destroy(_whiteCircle);
