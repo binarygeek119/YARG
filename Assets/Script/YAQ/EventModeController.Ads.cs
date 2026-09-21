@@ -7,6 +7,7 @@ using UnityEngine;
 using YARG.Core.Audio;
 using YARG.Core.Logging;
 using YARG.Core.Song;
+using YARG.Helpers.Extensions;
 using YARG.Settings;
 using YARG.Song;
 
