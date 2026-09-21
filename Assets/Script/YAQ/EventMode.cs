@@ -68,7 +68,7 @@ namespace YARG
         /// <summary>
         /// When true, ads holds each song for its full length and ignores <see cref="AdsSeconds"/>.
         /// </summary>
-        public static bool AdsPlayFullSong { get; private set; }
+        public static bool AdsPlayFullSong { get; private set; } = true;
 
         public static void SetAdsSeconds(int seconds)
         {

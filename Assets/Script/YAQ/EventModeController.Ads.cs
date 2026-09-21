@@ -445,12 +445,20 @@ namespace YARG.YAQ
             }
         }
 
-        private static float AdsHoldSeconds(SongEntry song)
+        private float AdsHoldSeconds(SongEntry song)
         {
-            if (EventMode.AdsPlayFullSong && song != null)
+            if (EventMode.AdsPlayFullSong)
             {
-                var length = (float) song.SongLengthSeconds;
-                if (length >= EventMode.MinAdsSeconds) return length;
+                if (_adsMixer != null && _adsMixer.Length >= EventMode.MinAdsSeconds)
+                {
+                    return (float) _adsMixer.Length;
+                }
+
+                if (song != null)
+                {
+                    var length = (float) song.SongLengthSeconds;
+                    if (length >= EventMode.MinAdsSeconds) return length;
+                }
             }
 
             return Mathf.Max(EventMode.MinAdsSeconds, EventMode.AdsSeconds);
@@ -733,7 +741,7 @@ namespace YARG.YAQ
                 _adsMixer = mixer;
                 if (_adsMixer == null)
                 {
-                    YargLogger.LogFormatWarning("YAQ ads audio missing stems for {0}", (string) song.Name);
+                    YargLogger.LogWarning($"YAQ ads audio missing stems for {song.Name}");
                     return;
                 }
 
@@ -745,10 +753,8 @@ namespace YARG.YAQ
                     var playResult = _adsMixer.Play();
                     if (playResult != 0)
                     {
-                        YargLogger.LogFormatWarning(
-                            "YAQ ads audio play failed ({0}) for {1}",
-                            playResult,
-                            (string) song.Name);
+                        YargLogger.LogWarning(
+                            $"YAQ ads audio play failed ({playResult}) for {song.Name}");
                         StopAdsAudio();
                         return;
                     }
@@ -758,11 +764,15 @@ namespace YARG.YAQ
                         _adsMixer.FadeIn(volume, AdsArtFadeSeconds);
                     }
 
-                    YargLogger.LogFormatInfo(
-                        "YAQ ads audio playing {0} (volume={1:0.00}{2})",
-                        (string) song.Name,
-                        volume,
-                        EventMode.Flags.hotMic ? ", hot mic duck" : string.Empty);
+                    if (EventMode.AdsPlayFullSong &&
+                        _adsMixer.Length >= EventMode.MinAdsSeconds)
+                    {
+                        _adsHoldUntil = Time.unscaledTime + (float) _adsMixer.Length;
+                    }
+
+                    YargLogger.LogInfo(
+                        $"YAQ ads audio playing {song.Name} (volume={volume:0.00}" +
+                        $"{(EventMode.Flags.hotMic ? ", hot mic duck" : string.Empty)})");
                 }
                 catch (Exception ex)
                 {
