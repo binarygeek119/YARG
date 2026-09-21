@@ -497,7 +497,6 @@ namespace YARG.YAQ
         {
             if (!TryGetCurrentSong(out _, out var title, out var artist, out _))
             {
-                DrawFittedLabel(titleRect, "Waiting for the next group…", _bodyStyle, 16);
                 return;
             }
 
@@ -1403,6 +1402,12 @@ namespace YARG.YAQ
             var hasNext = TryGetNextSong(out var title, out var artist, out _);
             if (!hasNext)
             {
+                DrawFittedLabel(
+                    new Rect(nextRect.x + pad, nextRect.y, Mathf.Max(1f, nextRect.width - pad * 2f), nextRect.height),
+                    "Waiting for the next group…",
+                    _nextTitleStyle,
+                    16,
+                    TextAnchor.MiddleCenter);
                 return;
             }
 
