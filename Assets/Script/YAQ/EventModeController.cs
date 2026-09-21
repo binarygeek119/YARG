@@ -57,7 +57,11 @@ namespace YARG.YAQ
         private Texture2D _previewCover;
         private string _currentCoverHash;
         private string _previewCoverHash;
-        private int _coverLoadGeneration;
+        private int _currentCoverGeneration;
+        private int _previewCoverGeneration;
+        private bool _currentCoverFlipped;
+        private bool _previewCoverFlipped;
+        private float _nextCoverRetryAt;
 
         private Texture2D _qrTexture;
         private string _qrJoinUrl;
@@ -251,6 +255,12 @@ namespace YARG.YAQ
             {
                 _nextQrRetryAt = Time.unscaledTime + 5f;
                 RequestQr();
+            }
+
+            if (Time.unscaledTime >= _nextCoverRetryAt)
+            {
+                _nextCoverRetryAt = Time.unscaledTime + 3f;
+                RetryMissingCovers();
             }
         }
 
@@ -559,14 +569,22 @@ namespace YARG.YAQ
             }
         }
 
-        private static void DrawAlbumArt(Rect rect, Texture2D texture)
+        private void DrawAlbumArt(Rect rect, Texture2D texture)
         {
             if (rect.width < 8f || rect.height < 8f) return;
 
             if (texture != null)
             {
-                // Album textures are loaded flipped for RawImage; flip for OnGUI too.
-                GUI.DrawTextureWithTexCoords(rect, texture, new Rect(0f, 1f, 1f, -1f));
+                var flipped = (texture == _previewCover && _previewCoverFlipped) ||
+                              (texture == _currentCover && _currentCoverFlipped);
+                if (flipped)
+                {
+                    GUI.DrawTextureWithTexCoords(rect, texture, new Rect(0f, 1f, 1f, -1f));
+                }
+                else
+                {
+                    GUI.DrawTexture(rect, texture, ScaleMode.ScaleToFit);
+                }
             }
             else
             {
@@ -1398,7 +1416,7 @@ namespace YARG.YAQ
                     year = song.UnmodifiedYear ?? song.ParsedYear ?? "",
                     genre = song.Genre.ToString(),
                     charter = song.Charter.ToString(),
-                    folderPath = song.Location ?? song.ActualLocation ?? "",
+                    folderPath = FirstNonEmpty(song.ActualLocation, song.Location, song.SortBasedLocation),
                     instruments,
                     source = "yarg",
                     verified = true
@@ -1524,71 +1542,121 @@ namespace YARG.YAQ
             {
                 if (_previewCoverHash == songHash && _previewCover != null) return;
                 _previewCoverHash = songHash;
-            }
-            else
-            {
-                if (_currentCoverHash == songHash && _currentCover != null) return;
-                _currentCoverHash = songHash;
+                LoadCoverAsync(true, songHash, ++_previewCoverGeneration).Forget();
+                return;
             }
 
-            var generation = ++_coverLoadGeneration;
-            LoadCoverAsync(preview, songHash, generation).Forget();
+            if (_currentCoverHash == songHash && _currentCover != null) return;
+            _currentCoverHash = songHash;
+            LoadCoverAsync(false, songHash, ++_currentCoverGeneration).Forget();
+        }
+
+        private void RetryMissingCovers()
+        {
+            if (_previewCover == null && !string.IsNullOrEmpty(_preview?.songHash))
+            {
+                _previewCoverHash = null;
+                RequestCover(true, _preview.songHash);
+            }
+
+            if (_currentCover == null && !string.IsNullOrEmpty(_currentSet?.songHash) &&
+                (_phase == "ready" || _phase == "score"))
+            {
+                _currentCoverHash = null;
+                RequestCover(false, _currentSet.songHash);
+            }
+        }
+
+        private int CoverGeneration(bool preview)
+        {
+            return preview ? _previewCoverGeneration : _currentCoverGeneration;
         }
 
         private async UniTaskVoid LoadCoverAsync(bool preview, string songHash, int generation)
         {
-            if (!SongContainer.SongsByHash.TryGetValue(HashWrapper.FromString(songHash), out var songs) ||
-                songs == null || songs.Count == 0)
-            {
-                Enqueue(() =>
-                {
-                    if (generation != _coverLoadGeneration) return;
-                    ClearCover(preview);
-                });
-                return;
-            }
-
-            var song = songs[0];
-            YARG.Core.IO.YARGImage image = null;
+            byte[] httpBytes = null;
             try
             {
-                image = await UniTask.RunOnThreadPool(() => song.LoadAlbumData());
+                var url = CoverApiUrlFromBridge(EventMode.YaqWebSocketUrl, songHash);
+                httpBytes = await UniTask.RunOnThreadPool(() =>
+                {
+                    using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                    var response = client.GetAsync(url).GetAwaiter().GetResult();
+                    if (!response.IsSuccessStatusCode) return null;
+                    return response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
+                });
             }
             catch (Exception ex)
             {
-                YargLogger.LogException(ex, "YAQ album art load failed");
+                YargLogger.LogFormatWarning("YAQ album art HTTP fetch failed: {0}", ex.Message);
+            }
+
+            YARG.Core.IO.YARGImage image = null;
+            if (httpBytes == null || httpBytes.Length == 0)
+            {
+                if (SongContainer.SongsByHash.TryGetValue(HashWrapper.FromString(songHash), out var songs) &&
+                    songs != null && songs.Count > 0)
+                {
+                    try
+                    {
+                        image = await UniTask.RunOnThreadPool(() => songs[0].LoadAlbumData());
+                    }
+                    catch (Exception ex)
+                    {
+                        YargLogger.LogException(ex, "YAQ album art load failed");
+                    }
+                }
             }
 
             Enqueue(() =>
             {
-                if (generation != _coverLoadGeneration)
+                if (generation != CoverGeneration(preview))
                 {
                     image?.Dispose();
                     return;
                 }
 
                 ClearCover(preview);
+                if (httpBytes != null && httpBytes.Length > 0)
+                {
+                    var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                    if (texture.LoadImage(httpBytes))
+                    {
+                        AssignCover(preview, songHash, texture, false);
+                        image?.Dispose();
+                        return;
+                    }
+
+                    Destroy(texture);
+                }
+
                 if (image == null) return;
 
                 try
                 {
-                    var texture = image.LoadTexture(false);
-                    if (preview)
-                    {
-                        _previewCover = texture;
-                        _previewCoverHash = songHash;
-                    }
-                    else
-                    {
-                        _currentCover = texture;
-                        _currentCoverHash = songHash;
-                    }
+                    AssignCover(preview, songHash, image.LoadTexture(false), true);
                 }
                 finally
                 {
                     image.Dispose();
                 }
             });
+        }
+
+        private void AssignCover(bool preview, string songHash, Texture2D texture, bool flipped)
+        {
+            if (preview)
+            {
+                _previewCover = texture;
+                _previewCoverHash = songHash;
+                _previewCoverFlipped = flipped;
+            }
+            else
+            {
+                _currentCover = texture;
+                _currentCoverHash = songHash;
+                _currentCoverFlipped = flipped;
+            }
         }
 
         private void ClearCover(bool preview)
@@ -1602,6 +1670,7 @@ namespace YARG.YAQ
                 }
 
                 _previewCoverHash = null;
+                _previewCoverFlipped = false;
             }
             else
             {
@@ -1612,12 +1681,14 @@ namespace YARG.YAQ
                 }
 
                 _currentCoverHash = null;
+                _currentCoverFlipped = false;
             }
         }
 
         private void ClearCovers()
         {
-            _coverLoadGeneration++;
+            _previewCoverGeneration++;
+            _currentCoverGeneration++;
             ClearCover(false);
             ClearCover(true);
         }
@@ -1707,6 +1778,28 @@ namespace YARG.YAQ
             }
 
             return "http://127.0.0.1:3000/api/qr";
+        }
+
+        internal static string CoverApiUrlFromBridge(string wsUrl, string songHash)
+        {
+            var hash = Uri.EscapeDataString(songHash ?? string.Empty);
+            if (Uri.TryCreate(wsUrl, UriKind.Absolute, out var uri))
+            {
+                var scheme = uri.Scheme == "wss" ? "https" : "http";
+                return $"{scheme}://{uri.Authority}/api/songs/{hash}/cover";
+            }
+
+            return $"http://127.0.0.1:3000/api/songs/{hash}/cover";
+        }
+
+        private static string FirstNonEmpty(params string[] values)
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value)) return value;
+            }
+
+            return string.Empty;
         }
 
         private void ApplyMainMenuVisibility()
