@@ -187,7 +187,7 @@ namespace YARG.YAQ
             EnsureHotMics();
             ReportEventModeState();
             RequestQr();
-            EventMode.SyncNoFailSetting();
+            EventMode.SyncEventGameplaySettings();
         }
 
         private void StopBridge()
@@ -208,7 +208,7 @@ namespace YARG.YAQ
             ClearHudShapes();
             YaqProfileAvatar.ClearCache();
             ApplyMainMenuVisibility();
-            EventMode.RestoreNoFailSetting();
+            EventMode.RestoreEventGameplaySettings();
         }
 
         /// <summary>
@@ -228,7 +228,7 @@ namespace YARG.YAQ
             ReportEventModeState();
             RequestQr();
             GoToEventSceneIfIdle();
-            EventMode.SyncNoFailSetting();
+            EventMode.SyncEventGameplaySettings();
             YargLogger.LogInfo("YAQ entered Event Mode");
         }
 
@@ -249,7 +249,7 @@ namespace YARG.YAQ
             ApplyMainMenuVisibility();
             ReportEventModeState();
             GoToMenuSceneIfIdle();
-            EventMode.SyncNoFailSetting();
+            EventMode.SyncEventGameplaySettings();
             YargLogger.LogInfo("YAQ exited Event Mode (bridge remains connected)");
         }
 
@@ -271,7 +271,7 @@ namespace YARG.YAQ
             ClearHudShapes();
             YaqProfileAvatar.ClearCache();
             _bridge?.Dispose();
-            EventMode.RestoreNoFailSetting();
+            EventMode.RestoreEventGameplaySettings();
             if (Instance == this) Instance = null;
         }
 
@@ -1957,7 +1957,7 @@ namespace YARG.YAQ
             EventMode.Flags.CopyFrom(flags ?? EventFlags.Defaults);
             ApplyMainMenuVisibility();
             EnsureHotMics();
-            EventMode.SyncNoFailSetting();
+            EventMode.SyncEventGameplaySettings();
             if (_venueSlots.Count > 0)
             {
                 ApplyVenueProfiles(_venueSlots, EventMode.Flags.addTestBots);
@@ -1976,17 +1976,19 @@ namespace YARG.YAQ
                     EventMode.Flags.skipMainMenu,
                     EventMode.Flags.openDifficultySelect,
                     EventMode.Flags.addTestBots,
-                    EventMode.Flags.noFail
+                    EventMode.Flags.noFail,
+                    EventMode.Flags.noMute
                 }
             });
             YargLogger.LogFormatInfo(
-                "YAQ event flags applied (hotMic={0}, hud={1}, skipMenu={2}, difficulty={3}, testBots={4}, noFail={5})",
+                "YAQ event flags applied (hotMic={0}, hud={1}, skipMenu={2}, difficulty={3}, testBots={4}, noFail={5}, noMute={6})",
                 EventMode.Flags.hotMic,
                 EventMode.Flags.showUpNextHud,
                 EventMode.Flags.skipMainMenu,
                 EventMode.Flags.openDifficultySelect,
                 EventMode.Flags.addTestBots,
-                EventMode.Flags.noFail);
+                EventMode.Flags.noFail,
+                EventMode.Flags.noMute);
         }
 
         private void ReportFlags()
@@ -2001,7 +2003,8 @@ namespace YARG.YAQ
                     EventMode.Flags.skipMainMenu,
                     EventMode.Flags.openDifficultySelect,
                     EventMode.Flags.addTestBots,
-                    EventMode.Flags.noFail
+                    EventMode.Flags.noFail,
+                    EventMode.Flags.noMute
                 }
             });
         }

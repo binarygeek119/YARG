@@ -6,6 +6,7 @@ using DG.Tweening.Plugins.Options;
 using UnityEngine;
 using YARG.Core.Audio;
 using YARG.Settings;
+using YARG;
 
 namespace YARG.Gameplay
 {
@@ -121,6 +122,11 @@ namespace YARG.Gameplay
 
         public void ChangeStemMuteState(SongStem stem, bool muted, float duration = 0.0f)
         {
+            if (muted && EventMode.IsActive && EventMode.Flags.noMute)
+            {
+                return;
+            }
+
             var setting = SettingsManager.Settings.MuteOnMiss.Value;
             if (setting == AudioFxMode.Off
             || !_stemStates.TryGetValue(stem, out var state)
@@ -145,6 +151,17 @@ namespace YARG.Gameplay
             else
             {
                 _volumeTween.ChangeEndValue(volume);
+            }
+        }
+
+        public void RestoreMutedStems()
+        {
+            foreach (var pair in _stemStates)
+            {
+                var state = pair.Value;
+                if (state.Total <= 0) continue;
+                state.Audible = state.Total;
+                GlobalAudioHandler.SetVolumeSetting(pair.Key, state.Volume);
             }
         }
 

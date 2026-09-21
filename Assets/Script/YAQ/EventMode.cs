@@ -1,4 +1,7 @@
 using System;
+using UnityEngine;
+using YARG.Core.Audio;
+using YARG.Gameplay;
 using YARG.Gameplay.HUD;
 using YARG.Settings;
 
@@ -16,6 +19,7 @@ namespace YARG
         public bool openDifficultySelect = true;
         public bool addTestBots = false;
         public bool noFail = true;
+        public bool noMute = true;
 
         public static EventFlags Defaults => new();
 
@@ -28,6 +32,7 @@ namespace YARG
             openDifficultySelect = other.openDifficultySelect;
             addTestBots = other.addTestBots;
             noFail = other.noFail;
+            noMute = other.noMute;
         }
     }
 
@@ -59,9 +64,22 @@ namespace YARG
         public static bool IsActive => StreamConnected && !Suspended;
 
         /// <summary>
-        /// Remember the player's No Fail setting so Event Mode can restore it on exit.
+        /// Remember the player's No Fail / Mute on Miss settings so Event Mode can restore them on exit.
         /// </summary>
         private static NoFailMode? _noFailRestore;
+        private static AudioFxMode? _muteOnMissRestore;
+
+        public static void SyncEventGameplaySettings()
+        {
+            SyncNoFailSetting();
+            SyncMuteOnMissSetting();
+        }
+
+        public static void RestoreEventGameplaySettings()
+        {
+            RestoreNoFailSetting();
+            RestoreMuteOnMissSetting();
+        }
 
         /// <summary>
         /// Put gameplay in No Fail while Event Mode is active and the flag is on.
@@ -95,6 +113,41 @@ namespace YARG
                 setting.Value = previous;
             }
             _noFailRestore = null;
+        }
+
+        /// <summary>
+        /// Disable mute-on-miss while Event Mode is active and the flag is on.
+        /// Restores the previous Mute on Miss setting when Event Mode ends or the flag is cleared.
+        /// </summary>
+        public static void SyncMuteOnMissSetting()
+        {
+            var setting = SettingsManager.Settings?.MuteOnMiss;
+            if (setting == null) return;
+
+            if (IsActive && Flags.noMute)
+            {
+                _muteOnMissRestore ??= setting.Value;
+                if (setting.Value != AudioFxMode.Off)
+                {
+                    setting.Value = AudioFxMode.Off;
+                }
+                UnityEngine.Object.FindAnyObjectByType<GameManager>()?.RestoreMutedStems();
+                return;
+            }
+
+            RestoreMuteOnMissSetting();
+        }
+
+        public static void RestoreMuteOnMissSetting()
+        {
+            var setting = SettingsManager.Settings?.MuteOnMiss;
+            if (setting == null) return;
+            if (_muteOnMissRestore is not { } previous) return;
+            if (setting.Value != previous)
+            {
+                setting.Value = previous;
+            }
+            _muteOnMissRestore = null;
         }
 
         /// <summary>
