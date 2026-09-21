@@ -1186,7 +1186,7 @@ namespace YARG.YAQ
         {
             if (nextRect.width < 8f || nextRect.height < 8f) return;
 
-            DrawHorizontalGradient(nextRect, NextBarDark, NextBarLight);
+            DrawScrollingHorizontalGradient(nextRect, NextBarDark, NextBarLight);
 
             var pad = 20f;
             var hasNext = TryGetNextSong(out var title, out var artist, out _);
@@ -1268,11 +1268,15 @@ namespace YARG.YAQ
             GUI.color = prev;
         }
 
-        private void DrawHorizontalGradient(Rect rect, Color left, Color right)
+        private void DrawScrollingHorizontalGradient(Rect rect, Color left, Color right)
         {
             if (Event.current.type != EventType.Repaint) return;
-            var tex = HorizontalGradientTexture(left, right);
-            if (tex != null) GUI.DrawTexture(rect, tex, ScaleMode.StretchToFill, false);
+            var tex = LoopingHorizontalGradientTexture(left, right);
+            if (tex == null) return;
+
+            const float period = 3.5f;
+            var shift = Mathf.Repeat(-Time.unscaledTime / period, 1f);
+            GUI.DrawTextureWithTexCoords(rect, tex, new Rect(shift, 0f, 1f, 1f));
         }
 
         private void DrawDiagonalGradient(Rect rect, Color bottomRight, Color topLeft)
@@ -1282,9 +1286,9 @@ namespace YARG.YAQ
             if (tex != null) GUI.DrawTexture(rect, tex, ScaleMode.StretchToFill, false);
         }
 
-        private Texture2D HorizontalGradientTexture(Color left, Color right)
+        private Texture2D LoopingHorizontalGradientTexture(Color left, Color right)
         {
-            var key = $"hg:{ColorKey(left)}:{ColorKey(right)}";
+            var key = $"hgloop:{ColorKey(left)}:{ColorKey(right)}";
             if (_hudShapes.TryGetValue(key, out var cached) && cached != null) return cached;
 
             const int width = 256;
@@ -1292,11 +1296,13 @@ namespace YARG.YAQ
             {
                 hideFlags = HideFlags.HideAndDontSave,
                 filterMode = FilterMode.Bilinear,
-                wrapMode = TextureWrapMode.Clamp
+                wrapMode = TextureWrapMode.Repeat
             };
             for (var x = 0; x < width; x++)
             {
-                tex.SetPixel(x, 0, Color.Lerp(left, right, x / (width - 1f)));
+                var u = x / (float) width;
+                var t = 0.5f - 0.5f * Mathf.Cos(u * 2f * Mathf.PI);
+                tex.SetPixel(x, 0, Color.Lerp(left, right, t));
             }
 
             tex.Apply(false, false);
