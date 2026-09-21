@@ -2188,12 +2188,6 @@ namespace YARG.YAQ
                     PlayerContainer.CreatePlayerFromProfile(profile, true);
                 }
 
-                var player = PlayerContainer.GetPlayerFromProfile(profile);
-                if (player != null)
-                {
-                    player.SittingOut = false;
-                }
-
                 YaqProfileAvatar.Remember(slot.slotId, slot.name, slot.dataUrl);
             }
 
@@ -2211,6 +2205,7 @@ namespace YARG.YAQ
             }
 
             YargLogger.LogFormatInfo("YAQ venue profiles applied ({0} slots)", _venueSlots.Count);
+            SitOutMissingParts(GlobalVariables.State.CurrentSong);
         }
 
         private void ApplyPlayers(List<YaqSetPlayer> players)

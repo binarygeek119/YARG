@@ -481,8 +481,7 @@ namespace YARG.Gameplay
                         continue;
                     }
 
-                    if (!player.IsReplay &&
-                        !EventModeController.SongHasPart(Song, player.Profile.CurrentInstrument))
+                    if (!player.IsReplay && !ChartHasPlayablePart(Chart, player.Profile.CurrentInstrument))
                     {
                         YargLogger.LogFormatInfo(
                             "Skipping player {0} on {1}: song has no part",
@@ -606,6 +605,69 @@ namespace YARG.Gameplay
                 _loadFailureMessage = "Failed to load song!";
                 YargLogger.LogException(ex, "Failed to load song!");
             }
+        }
+
+        private static bool ChartHasPlayablePart(SongChart chart, Instrument instrument)
+        {
+            if (chart == null) return true;
+            try
+            {
+                if (TrackHasNotes(chart, instrument)) return true;
+                return instrument switch
+                {
+                    Instrument.Vocals => TrackHasNotes(chart, Instrument.Harmony),
+                    Instrument.Harmony => TrackHasNotes(chart, Instrument.Vocals),
+                    Instrument.FourLaneDrums =>
+                        TrackHasNotes(chart, Instrument.ProDrums) ||
+                        TrackHasNotes(chart, Instrument.FiveLaneDrums) ||
+                        TrackHasNotes(chart, Instrument.EliteDrums),
+                    Instrument.ProDrums =>
+                        TrackHasNotes(chart, Instrument.FourLaneDrums) ||
+                        TrackHasNotes(chart, Instrument.FiveLaneDrums) ||
+                        TrackHasNotes(chart, Instrument.EliteDrums),
+                    Instrument.FiveLaneDrums =>
+                        TrackHasNotes(chart, Instrument.FourLaneDrums) ||
+                        TrackHasNotes(chart, Instrument.ProDrums) ||
+                        TrackHasNotes(chart, Instrument.EliteDrums),
+                    Instrument.EliteDrums =>
+                        TrackHasNotes(chart, Instrument.FourLaneDrums) ||
+                        TrackHasNotes(chart, Instrument.ProDrums) ||
+                        TrackHasNotes(chart, Instrument.FiveLaneDrums),
+                    _ => false
+                };
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TrackHasNotes(SongChart chart, Instrument instrument)
+        {
+            return instrument switch
+            {
+                Instrument.FiveFretGuitar or
+                Instrument.FiveFretBass or
+                Instrument.FiveFretRhythm or
+                Instrument.FiveFretCoopGuitar or
+                Instrument.Keys => !chart.GetFiveFretTrack(instrument).IsEmpty,
+                Instrument.SixFretGuitar or
+                Instrument.SixFretBass or
+                Instrument.SixFretRhythm or
+                Instrument.SixFretCoopGuitar => !chart.GetSixFretTrack(instrument).IsEmpty,
+                Instrument.FourLaneDrums or
+                Instrument.ProDrums or
+                Instrument.FiveLaneDrums => !chart.GetDrumsTrack(instrument).IsEmpty,
+                Instrument.EliteDrums => !chart.EliteDrums.IsEmpty,
+                Instrument.ProGuitar_17Fret or
+                Instrument.ProGuitar_22Fret or
+                Instrument.ProBass_17Fret or
+                Instrument.ProBass_22Fret => !chart.GetProGuitarTrack(instrument).IsEmpty,
+                Instrument.ProKeys => !chart.ProKeys.IsEmpty,
+                Instrument.Vocals => !chart.Vocals.IsEmpty,
+                Instrument.Harmony => !chart.Harmony.IsEmpty,
+                _ => false
+            };
         }
     }
 }
