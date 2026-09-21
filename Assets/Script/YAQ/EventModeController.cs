@@ -667,7 +667,7 @@ namespace YARG.YAQ
 
         internal static string ReadyBarLabel(bool ready)
         {
-            return ready ? "Ready" : "Ready ?";
+            return ready ? "Ready" : "press green when ready";
         }
 
         private bool PlayerIsReady(string id, string slotId, string name, bool isBot)
@@ -948,7 +948,13 @@ namespace YARG.YAQ
             DrawPackedPlayer(row, player, 44f, 40f, _playerNameStyle ?? _bodyStyle);
 
             var readyRect = new Rect(rect.x + 10f, rect.yMax - readyH, rect.width - 20f, readyH);
-            GUI.Label(readyRect, ReadyBarLabel(player.Ready), _readyStyle);
+            var readyLabel = ReadyBarLabel(player.Ready);
+            if (_readyStyle != null)
+            {
+                _readyStyle.fontSize = FontSizeToFit(
+                    _readyStyle, readyLabel, readyRect.width, readyRect.height, 11, 20);
+            }
+            GUI.Label(readyRect, readyLabel, _readyStyle);
         }
 
         private void DrawHudAvatar(Rect rect, string name, string id)
