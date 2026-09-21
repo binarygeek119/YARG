@@ -7,6 +7,7 @@ using Cysharp.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 using YARG.Core;
+using YARG.Core.Engine.Guitar;
 using YARG.Core.Game;
 using YARG.Core.Logging;
 using YARG.Core.Song;
@@ -989,25 +990,51 @@ namespace YARG.YAQ
             {
                 bandScore = stats.BandScore,
                 bandStars = stats.BandStars,
-                players = stats.PlayerScores?.Select(card => new
+                players = stats.PlayerScores?.Select(card =>
                 {
-                    name = card.Player?.Profile?.Name,
-                    instrument = card.Player?.Profile?.CurrentInstrument.ToString(),
-                    difficulty = card.Player?.Profile?.CurrentDifficulty.ToString(),
-                    score = card.Stats?.TotalScore ?? 0,
-                    stars = card.Stats?.Stars ?? 0f,
-                    percent = card.Stats?.Percent ?? 0f,
-                    notesHit = card.Stats?.NotesHit ?? 0,
-                    totalNotes = card.Stats?.TotalNotes ?? 0,
-                    maxCombo = card.Stats?.MaxCombo ?? 0,
-                    starPowerPhrasesHit = card.Stats?.StarPowerPhrasesHit ?? 0,
-                    totalStarPowerPhrases = card.Stats?.TotalStarPowerPhrases ?? 0,
-                    averageMultiplier = card.Stats?.AverageMultiplier ?? 0f,
-                    isFullCombo = card.Stats?.IsFullCombo ?? false,
-                    isHighScore = card.IsHighScore,
-                    isBot = card.Player?.Profile?.IsBot ?? false
+                    var guitar = card.Stats as GuitarStats;
+                    return new
+                    {
+                        name = card.Player?.Profile?.Name,
+                        instrument = card.Player?.Profile?.CurrentInstrument.ToString(),
+                        difficulty = card.Player?.Profile?.CurrentDifficulty.ToString(),
+                        score = card.Stats?.TotalScore ?? 0,
+                        stars = card.Stats?.Stars ?? 0f,
+                        percent = card.Stats?.Percent ?? 0f,
+                        notesHit = card.Stats?.NotesHit ?? 0,
+                        totalNotes = card.Stats?.TotalNotes ?? 0,
+                        notesMissed = card.Stats?.NotesMissed ?? 0,
+                        maxCombo = card.Stats?.MaxCombo ?? 0,
+                        starPowerPhrasesHit = card.Stats?.StarPowerPhrasesHit ?? 0,
+                        totalStarPowerPhrases = card.Stats?.TotalStarPowerPhrases ?? 0,
+                        averageMultiplier = card.Stats?.AverageMultiplier ?? 0f,
+                        overstrums = guitar?.Overstrums ?? 0,
+                        ghostInputs = guitar?.GhostInputs ?? 0,
+                        starPowerActivations = card.Stats?.StarPowerActivationCount ?? 0,
+                        timeInStarPower = card.Stats?.TimeInStarPower ?? 0d,
+                        enginePreset = EnginePresetLabel(card.Player),
+                        modifiersUsed = card.Player?.Profile != null &&
+                            card.Player.Profile.CurrentModifiers != Modifier.None,
+                        isFullCombo = card.Stats?.IsFullCombo ?? false,
+                        isHighScore = card.IsHighScore,
+                        isBot = card.Player?.Profile?.IsBot ?? false
+                    };
                 }).ToArray()
             };
+        }
+
+        private static string EnginePresetLabel(YargPlayer player)
+        {
+            var preset = player?.EnginePreset;
+            if (preset == null || preset.Id == EnginePreset.Default.Id)
+            {
+                return "Default Engine";
+            }
+
+            if (preset.Id == EnginePreset.Casual.Id) return "Casual Engine";
+            if (preset.Id == EnginePreset.Precision.Id) return "Precision Engine";
+            if (preset.Id == EnginePreset.SoloTaps.Id) return "Solo Taps Engine";
+            return "Custom Engine Preset";
         }
 
         private void SendState(string state)
