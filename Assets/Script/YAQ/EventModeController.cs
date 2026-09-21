@@ -6,6 +6,7 @@ using System.Net.Http;
 using Cysharp.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
+using UnityEngine.AddressableAssets;
 using YARG.Core;
 using YARG.Core.Engine.Guitar;
 using YARG.Core.Game;
@@ -45,7 +46,6 @@ namespace YARG.YAQ
         private GUIStyle _artistStyle;
         private GUIStyle _bodyStyle;
         private GUIStyle _playerNameStyle;
-        private GUIStyle _instrumentStyle;
         private GUIStyle _avatarInitialStyle;
         private GUIStyle _mutedStyle;
         private GUIStyle _qrCaptionStyle;
@@ -70,6 +70,7 @@ namespace YARG.YAQ
         private string _qrJoinUrl;
         private int _qrLoadGeneration;
         private float _nextQrRetryAt;
+        private readonly Dictionary<string, Sprite> _instrumentIcons = new(StringComparer.OrdinalIgnoreCase);
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Bootstrap()
@@ -635,8 +636,13 @@ namespace YARG.YAQ
 
         private void DrawPlayerNameRow(string name, float avatar, float gap)
         {
-            GUILayout.BeginHorizontal();
-            var avatarRect = GUILayoutUtility.GetRect(avatar, avatar, GUILayout.Width(avatar), GUILayout.Height(avatar));
+            GUILayout.BeginHorizontal(GUILayout.ExpandWidth(false));
+            var avatarRect = GUILayoutUtility.GetRect(
+                avatar,
+                avatar,
+                GUILayout.Width(avatar),
+                GUILayout.Height(avatar),
+                GUILayout.ExpandWidth(false));
             if (Event.current.type == EventType.Repaint && avatarRect.width > 2f)
             {
                 try
@@ -660,13 +666,22 @@ namespace YARG.YAQ
 
             GUILayout.Space(gap);
             DrawFixedHudLabel(name ?? string.Empty, _playerNameStyle ?? _bodyStyle, avatar);
-            var instrument = InstrumentLabelFor(name);
-            if (!string.IsNullOrEmpty(instrument))
+            var icon = InstrumentIconFor(name);
+            if (icon != null)
             {
                 GUILayout.Space(gap);
-                DrawFixedHudLabel(instrument, _instrumentStyle ?? _mutedStyle, avatar);
+                var iconRect = GUILayoutUtility.GetRect(
+                    avatar,
+                    avatar,
+                    GUILayout.Width(avatar),
+                    GUILayout.Height(avatar),
+                    GUILayout.ExpandWidth(false));
+                if (Event.current.type == EventType.Repaint && iconRect.width > 2f)
+                {
+                    DrawSprite(iconRect, icon);
+                }
             }
-            GUILayout.FlexibleSpace();
+
             GUILayout.EndHorizontal();
             GUILayout.Space(8f);
         }
@@ -681,6 +696,21 @@ namespace YARG.YAQ
                 GUILayout.Width(Mathf.Max(1f, width)),
                 GUILayout.Height(height),
                 GUILayout.ExpandWidth(false));
+        }
+
+        private static void DrawSprite(Rect rect, Sprite sprite)
+        {
+            if (sprite == null) return;
+            var tex = sprite.texture;
+            if (tex == null) return;
+
+            var tr = sprite.textureRect;
+            var uv = new Rect(
+                tr.x / tex.width,
+                tr.y / tex.height,
+                tr.width / tex.width,
+                tr.height / tex.height);
+            GUI.DrawTextureWithTexCoords(rect, tex, uv, true);
         }
 
         private static string InitialGlyph(string name)
@@ -702,45 +732,108 @@ namespace YARG.YAQ
             return preview?.id ?? preview?.slotId;
         }
 
-        private string InstrumentLabelFor(string name)
+        private string InstrumentIdFor(string name)
         {
             var current = _currentPlayers?.Find(player => player != null && player.name == name);
-            if (!string.IsNullOrWhiteSpace(current?.instrument))
-            {
-                return InstrumentLabel(current.instrument);
-            }
+            if (!string.IsNullOrWhiteSpace(current?.instrument)) return current.instrument;
 
             var preview = _preview?.players?.Find(player => player != null && player.name == name);
-            if (!string.IsNullOrWhiteSpace(preview?.instrument))
-            {
-                return InstrumentLabel(preview.instrument);
-            }
+            if (!string.IsNullOrWhiteSpace(preview?.instrument)) return preview.instrument;
 
             var following = _preview?.following?.players?.Find(player => player != null && player.name == name);
-            return InstrumentLabel(following?.instrument);
+            return following?.instrument;
         }
 
-        internal static string InstrumentLabel(string instrument)
+        private Sprite InstrumentIconFor(string name)
         {
-            if (string.IsNullOrWhiteSpace(instrument)) return string.Empty;
-            return instrument switch
+            return LoadInstrumentIcon(InstrumentIdFor(name));
+        }
+
+        private void PrefetchInstrumentIcons(IEnumerable<YaqPreviewPlayer> players)
+        {
+            if (players == null) return;
+            foreach (var player in players)
             {
-                "FiveFretGuitar" or "SixFretGuitar" => "Guitar",
-                "FiveFretBass" or "SixFretBass" => "Bass",
-                "FiveFretRhythm" => "Rhythm",
-                "FiveFretCoop" or "FiveFretCoopGuitar" => "Co-op",
-                "Keys" => "Keys",
-                "ProKeys" => "Pro Keys",
-                "FourLaneDrums" => "Drums",
-                "ProDrums" => "Pro Drums",
-                "FiveLaneDrums" => "Five-lane Drums",
-                "EliteDrums" => "Elite Drums",
-                "ProGuitar_17" or "ProGuitar_17Fret" or "ProGuitar_22" or "ProGuitar_22Fret" => "Pro Guitar",
-                "ProBass_17" or "ProBass_17Fret" or "ProBass_22" or "ProBass_22Fret" => "Pro Bass",
-                "Vocals" => "Vocals",
-                "Harmony" => "Harmony",
-                _ => instrument
+                LoadInstrumentIcon(player?.instrument);
+            }
+        }
+
+        private void PrefetchInstrumentIcons(IEnumerable<YaqSetPlayer> players)
+        {
+            if (players == null) return;
+            foreach (var player in players)
+            {
+                LoadInstrumentIcon(player?.instrument);
+            }
+        }
+
+        private Sprite LoadInstrumentIcon(string instrument)
+        {
+            if (string.IsNullOrWhiteSpace(instrument)) return null;
+            if (_instrumentIcons.TryGetValue(instrument, out var cached)) return cached;
+
+            Sprite sprite = null;
+            try
+            {
+                var address = InstrumentIconAddress(instrument);
+                if (!string.IsNullOrEmpty(address))
+                {
+                    sprite = Addressables.LoadAssetAsync<Sprite>(address).WaitForCompletion();
+                }
+            }
+            catch (Exception ex)
+            {
+                YargLogger.LogException(ex, "YAQ instrument icon load failed");
+            }
+
+            _instrumentIcons[instrument] = sprite;
+            return sprite;
+        }
+
+        internal static string InstrumentIconAddress(string instrument)
+        {
+            if (!TryParseHudInstrument(instrument, out var parsed)) return null;
+
+            var key = parsed switch
+            {
+                Instrument.ProGuitar_22Fret => "realGuitar",
+                Instrument.ProBass_22Fret => "realBass",
+                _ => parsed.ToResourceName()
             };
+            return string.IsNullOrEmpty(key) ? null : $"InstrumentIcons[{key}]";
+        }
+
+        internal static bool TryParseHudInstrument(string value, out Instrument instrument)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                instrument = default;
+                return false;
+            }
+
+            if (Enum.TryParse(value, true, out instrument)) return true;
+
+            switch (value)
+            {
+                case "FiveFretCoop":
+                    instrument = Instrument.FiveFretCoopGuitar;
+                    return true;
+                case "ProGuitar_17":
+                    instrument = Instrument.ProGuitar_17Fret;
+                    return true;
+                case "ProGuitar_22":
+                    instrument = Instrument.ProGuitar_22Fret;
+                    return true;
+                case "ProBass_17":
+                    instrument = Instrument.ProBass_17Fret;
+                    return true;
+                case "ProBass_22":
+                    instrument = Instrument.ProBass_22Fret;
+                    return true;
+                default:
+                    instrument = default;
+                    return false;
+            }
         }
 
         private void DrawJoinQr(Rect captionRect, Rect qrRect)
@@ -843,16 +936,6 @@ namespace YARG.YAQ
                     clipping = TextClipping.Clip,
                     stretchWidth = false
                 };
-                _instrumentStyle = new GUIStyle(_bodyStyle)
-                {
-                    alignment = TextAnchor.MiddleLeft,
-                    fontSize = 22,
-                    fontStyle = FontStyle.Bold,
-                    normal = { textColor = new Color(0.72f, 0.82f, 0.9f) },
-                    wordWrap = false,
-                    clipping = TextClipping.Clip,
-                    stretchWidth = false
-                };
                 _avatarInitialStyle = new GUIStyle(_bodyStyle)
                 {
                     alignment = TextAnchor.MiddleCenter,
@@ -925,6 +1008,8 @@ namespace YARG.YAQ
                     if (EventMode.Suspended) break;
                     _preview = msg["preview"]?.ToObject<YaqQueuePreview>() ?? new YaqQueuePreview();
                     RememberPreviewPortraits(_preview?.players);
+                    PrefetchInstrumentIcons(_preview?.players);
+                    PrefetchInstrumentIcons(_preview?.following?.players);
                     RequestCover(true, _preview?.songHash);
                     break;
                 case "set.prepare":
@@ -1065,6 +1150,7 @@ namespace YARG.YAQ
             _currentSet = set;
             _currentPlayers = players;
             RememberSetPortraits(players);
+            PrefetchInstrumentIcons(players);
             _phase = "ready";
             _status = $"Ready: {set.songArtist} — {set.songName}";
             RequestCover(false, set.songHash);
