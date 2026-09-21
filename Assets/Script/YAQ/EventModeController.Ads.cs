@@ -59,6 +59,7 @@ namespace YARG.YAQ
         private StemMixer _adsMixer;
         private int _adsAudioGeneration;
         private string _adsAudioHash;
+        private float _adsHoldFrozenAt;
 
         private void ApplyAdsSeconds(JToken token)
         {
@@ -228,6 +229,12 @@ namespace YARG.YAQ
             }
 
             if (scene != SceneIndex.Ads) return;
+
+            if (AnnouncementBusy)
+            {
+                PauseAdsForAnnouncement();
+                return;
+            }
 
             if (_adsReturningToEvent)
             {
@@ -645,6 +652,11 @@ namespace YARG.YAQ
         internal void ApplyAdsMusicMute()
         {
             if (_adsMixer == null) return;
+            if (AnnouncementBusy)
+            {
+                PauseAdsForAnnouncement();
+                return;
+            }
 
             var target = AdsMusicVolume();
             if (target <= 0.0001)
@@ -750,18 +762,25 @@ namespace YARG.YAQ
                 {
                     _adsMixer.SetPosition(0);
                     _adsMixer.SetVolume(0);
-                    var playResult = _adsMixer.Play();
-                    if (playResult != 0)
+                    if (AnnouncementBusy)
                     {
-                        YargLogger.LogWarning(
-                            $"YAQ ads audio play failed ({playResult}) for {song.Name}");
-                        StopAdsAudio();
-                        return;
+                        PauseAdsForAnnouncement();
                     }
-
-                    if (volume > 0.0001)
+                    else
                     {
-                        _adsMixer.FadeIn(volume, AdsArtFadeSeconds);
+                        var playResult = _adsMixer.Play();
+                        if (playResult != 0)
+                        {
+                            YargLogger.LogWarning(
+                                $"YAQ ads audio play failed ({playResult}) for {song.Name}");
+                            StopAdsAudio();
+                            return;
+                        }
+
+                        if (volume > 0.0001)
+                        {
+                            _adsMixer.FadeIn(volume, AdsArtFadeSeconds);
+                        }
                     }
 
                     if (EventMode.AdsPlayFullSong &&

@@ -56,30 +56,60 @@ namespace YARG.YAQ
             var venueIdle = scene is SceneIndex.Event or SceneIndex.Ads or SceneIndex.Menu;
             if (AnnouncementBusy)
             {
-                if (_adsMixer != null && scene == SceneIndex.Ads)
+                if (scene == SceneIndex.Ads)
                 {
-                    _adsMixer.Pause();
-                    _adsPausedForAnnouncement = true;
+                    PauseAdsForAnnouncement();
                 }
 
                 return;
             }
 
-            if (_adsPausedForAnnouncement && _adsMixer != null && scene == SceneIndex.Ads)
-            {
-                _adsPausedForAnnouncement = false;
-                try
-                {
-                    _adsMixer.Play();
-                }
-                catch
-                {
-                    // Mixer may have been replaced while the announcement played.
-                }
-            }
+            ResumeAdsAfterAnnouncement();
 
             if (!venueIdle || _announcementQueue.Count == 0) return;
             PlayAnnouncement(_announcementQueue.Dequeue());
+        }
+
+        private void PauseAdsForAnnouncement()
+        {
+            if (_adsMixer == null) return;
+            if (!_adsPausedForAnnouncement)
+            {
+                _adsHoldFrozenAt = Time.unscaledTime;
+            }
+
+            try
+            {
+                _adsMixer.Pause();
+            }
+            catch
+            {
+                // Mixer may already be gone.
+            }
+
+            _adsPausedForAnnouncement = true;
+        }
+
+        private void ResumeAdsAfterAnnouncement()
+        {
+            if (!_adsPausedForAnnouncement) return;
+            var scene = GlobalVariables.Instance?.CurrentScene;
+            if (_adsHoldFrozenAt > 0f)
+            {
+                _adsHoldUntil += Time.unscaledTime - _adsHoldFrozenAt;
+                _adsHoldFrozenAt = 0f;
+            }
+
+            _adsPausedForAnnouncement = false;
+            if (_adsMixer == null || scene != SceneIndex.Ads) return;
+            try
+            {
+                _adsMixer.Play();
+            }
+            catch
+            {
+                // Mixer may have been replaced while the announcement played.
+            }
         }
 
         private void PlayAnnouncement(string id)
@@ -181,11 +211,7 @@ namespace YARG.YAQ
                     }
 
                     _announcementMixer.SongEnd += OnAnnouncementEnded;
-                    if (_adsMixer != null)
-                    {
-                        _adsMixer.Pause();
-                        _adsPausedForAnnouncement = true;
-                    }
+                    PauseAdsForAnnouncement();
 
                     _announcementMixer.Play();
                     YargLogger.LogFormatInfo("YAQ announcement playing {0}", id);
