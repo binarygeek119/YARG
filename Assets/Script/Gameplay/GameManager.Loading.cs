@@ -274,6 +274,8 @@ namespace YARG.Gameplay
 
             _failMeter.Initialize(EngineManager, this);
 
+            EventMode.SyncNoFailSetting();
+
             if (SettingsManager.Settings.NoFail.Value == NoFailMode.NoMeter || IsPractice)
             {
                 _failMeter.SetActive(false);

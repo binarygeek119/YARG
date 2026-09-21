@@ -1,4 +1,5 @@
 using System;
+using YARG.Gameplay.HUD;
 using YARG.Settings;
 
 namespace YARG
@@ -14,6 +15,7 @@ namespace YARG
         public bool skipMainMenu = true;
         public bool openDifficultySelect = true;
         public bool addTestBots = false;
+        public bool noFail = true;
 
         public static EventFlags Defaults => new();
 
@@ -25,6 +27,7 @@ namespace YARG
             skipMainMenu = other.skipMainMenu;
             openDifficultySelect = other.openDifficultySelect;
             addTestBots = other.addTestBots;
+            noFail = other.noFail;
         }
     }
 
@@ -54,6 +57,45 @@ namespace YARG
             (SettingsManager.Settings?.YaqStreamEnabled.Value ?? false);
 
         public static bool IsActive => StreamConnected && !Suspended;
+
+        /// <summary>
+        /// Remember the player's No Fail setting so Event Mode can restore it on exit.
+        /// </summary>
+        private static NoFailMode? _noFailRestore;
+
+        /// <summary>
+        /// Put gameplay in No Fail while Event Mode is active and the flag is on.
+        /// Restores the previous setting when Event Mode ends or the flag is cleared.
+        /// </summary>
+        public static void SyncNoFailSetting()
+        {
+            var setting = SettingsManager.Settings?.NoFail;
+            if (setting == null) return;
+
+            if (IsActive && Flags.noFail)
+            {
+                _noFailRestore ??= setting.Value;
+                if (setting.Value == NoFailMode.Off)
+                {
+                    setting.Value = NoFailMode.On;
+                }
+                return;
+            }
+
+            RestoreNoFailSetting();
+        }
+
+        public static void RestoreNoFailSetting()
+        {
+            var setting = SettingsManager.Settings?.NoFail;
+            if (setting == null) return;
+            if (_noFailRestore is not { } previous) return;
+            if (setting.Value != previous)
+            {
+                setting.Value = previous;
+            }
+            _noFailRestore = null;
+        }
 
         /// <summary>
         /// Idle destination while Event Mode is active. Gameplay, score, and
