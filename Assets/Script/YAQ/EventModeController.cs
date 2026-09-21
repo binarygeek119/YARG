@@ -329,9 +329,9 @@ namespace YARG.YAQ
             if (TryGetCurrentSong(out var cover, out _, out _, out _))
             {
                 DrawAlbumArt(layout.ArtRect, cover);
+                DrawPlayerPanel(layout.PlayersRect, CurrentHudPlayers());
             }
 
-            DrawPlayerPanel(layout.PlayersRect, CurrentHudPlayers());
             DrawNextBar(layout.NextRect);
             DrawQrBlock(layout.QrRect);
             DrawCountdownOverlay();
@@ -1377,12 +1377,12 @@ namespace YARG.YAQ
 
             var pad = 20f;
             var hasNext = TryGetNextSong(out var title, out var artist, out _);
-            var players = NextHudPlayers();
-            if (!hasNext && (_preview?.following == null))
+            if (!hasNext)
             {
-                players = new List<HudPlayer>();
+                return;
             }
 
+            var players = NextHudPlayers();
             var captionH = 22f;
             var titleW = MeasureLabelWidth(title, _nextTitleStyle, 80f);
             var artistW = MeasureLabelWidth(artist, _nextArtistStyle, 80f);
@@ -1397,17 +1397,6 @@ namespace YARG.YAQ
                 nextRect.y + captionH + 6f,
                 textW,
                 Mathf.Max(1f, nextRect.height - captionH - 14f));
-
-            if (!hasNext)
-            {
-                var waitRect = new Rect(
-                    nextRect.x + pad,
-                    nextRect.y + captionH + 6f,
-                    Mathf.Max(1f, nextRect.width - pad * 2f),
-                    Mathf.Max(1f, nextRect.height - captionH - 14f));
-                DrawFittedLabel(waitRect, "Waiting for the next group…", _mutedStyle, 14);
-                return;
-            }
 
             var hasTitle = !string.IsNullOrEmpty(title);
             var hasArtist = !string.IsNullOrEmpty(artist);
@@ -2556,6 +2545,7 @@ namespace YARG.YAQ
         /// </summary>
         public void FinishEventSong()
         {
+            var endedSetId = _pendingSetId ?? _currentSet?.id;
             NotifySongEnded();
             _gameplayQueued = false;
             _launchRequested = false;
@@ -2567,6 +2557,17 @@ namespace YARG.YAQ
             RestoreVenueProfileNames();
             ClearCover(false);
             ClearReadyState();
+
+            // Last song in the queue: don't keep its art or players on the Event HUD.
+            if (_preview != null &&
+                _preview.following == null &&
+                (string.IsNullOrEmpty(_preview.setId) ||
+                 string.Equals(_preview.setId, endedSetId, StringComparison.Ordinal)))
+            {
+                _preview = new YaqQueuePreview();
+                ClearCover(true);
+            }
+
             BindReadySet(_preview?.setId);
 
             if (GlobalVariables.Instance != null &&
