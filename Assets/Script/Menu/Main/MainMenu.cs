@@ -22,7 +22,8 @@ namespace YARG.Menu.Main
 
             if (EventMode.IsActive && EventMode.Flags.skipMainMenu)
             {
-                // Event mode: YAQ drives song selection. Hide the normal main menu chrome.
+                // Event Mode idles on EventScene. MenuScene is only loaded for
+                // Difficulty Select; keep the main-menu chrome hidden there.
                 gameObject.SetActive(false);
                 return;
             }

@@ -28,7 +28,8 @@ namespace YARG
         Gameplay,
         Calibration,
         Score,
-        Content
+        Content,
+        Event
     }
 
     [DefaultExecutionOrder(-5000)]
@@ -107,7 +108,8 @@ namespace YARG
             SettingsManager.LoadSettings();
             InputManager.Initialize();
 
-            LoadScene(SceneIndex.Menu);
+            // Event Mode boots into EventScene; otherwise the normal menu.
+            LoadHubScene();
         }
 
 #if UNITY_EDITOR
@@ -169,6 +171,13 @@ namespace YARG
 
             await Resources.UnloadUnusedAssets();
             GC.Collect();
+        }
+
+        public void LoadHubScene()
+        {
+            var hub = EventMode.HubScene;
+            if (CurrentScene == hub) return;
+            LoadScene(hub);
         }
 
         public void LoadScene(SceneIndex scene)

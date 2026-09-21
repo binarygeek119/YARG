@@ -75,10 +75,12 @@ namespace YARG.YAQ
             {
                 EnsureExists();
                 Instance?.StartBridge();
+                Instance?.GoToEventSceneIfIdle();
             }
             else
             {
                 Instance?.StopBridge();
+                Instance?.GoToMenuSceneIfIdle();
             }
         }
 
@@ -168,6 +170,7 @@ namespace YARG.YAQ
             SendState("idle");
             ReportEventModeState();
             RequestQr();
+            GoToEventSceneIfIdle();
             YargLogger.LogInfo("YAQ entered Event Mode");
         }
 
@@ -185,6 +188,7 @@ namespace YARG.YAQ
             ClearCovers();
             ApplyMainMenuVisibility();
             ReportEventModeState();
+            GoToMenuSceneIfIdle();
             YargLogger.LogInfo("YAQ exited Event Mode (bridge remains connected)");
         }
 
@@ -240,11 +244,11 @@ namespace YARG.YAQ
             }
         }
 
-        private void OnGUI()
+        internal void DrawIdleHud()
         {
             if (!EventMode.IsActive || !EventMode.Flags.showUpNextHud) return;
-            if (GlobalVariables.Instance != null &&
-                GlobalVariables.Instance.CurrentScene == SceneIndex.Gameplay)
+            if (GlobalVariables.Instance == null ||
+                GlobalVariables.Instance.CurrentScene != SceneIndex.Event)
             {
                 return;
             }
@@ -1288,6 +1292,31 @@ namespace YARG.YAQ
 
             var hide = EventMode.IsActive && EventMode.Flags.skipMainMenu;
             mainMenu.gameObject.SetActive(!hide);
+        }
+
+        private void GoToEventSceneIfIdle()
+        {
+            if (!CanSwitchEventHub()) return;
+            if (GlobalVariables.Instance.CurrentScene == SceneIndex.Event) return;
+            GlobalVariables.Instance.LoadScene(SceneIndex.Event);
+        }
+
+        private void GoToMenuSceneIfIdle()
+        {
+            if (!CanSwitchEventHub()) return;
+            if (GlobalVariables.Instance.CurrentScene == SceneIndex.Menu) return;
+            GlobalVariables.Instance.LoadScene(SceneIndex.Menu);
+        }
+
+        private static bool CanSwitchEventHub()
+        {
+            var global = GlobalVariables.Instance;
+            if (global == null) return false;
+
+            // Persistent is boot. Don't yank gameplay or the score screen.
+            return global.CurrentScene is not SceneIndex.Persistent
+                and not SceneIndex.Gameplay
+                and not SceneIndex.Score;
         }
 
         private void EnsureHotMics()

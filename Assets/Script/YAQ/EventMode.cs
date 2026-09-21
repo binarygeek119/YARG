@@ -54,5 +54,11 @@ namespace YARG
             (SettingsManager.Settings?.YaqStreamEnabled.Value ?? false);
 
         public static bool IsActive => StreamConnected && !Suspended;
+
+        /// <summary>
+        /// Idle destination while Event Mode is active. Gameplay, score, and
+        /// difficulty select still use their own scenes.
+        /// </summary>
+        public static SceneIndex HubScene => IsActive ? SceneIndex.Event : SceneIndex.Menu;
     }
 }

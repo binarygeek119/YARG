@@ -25,10 +25,12 @@ The Experimental settings toggle connects/disconnects without restarting. Launch
 
 ## Behavior
 
-- Main menu is skipped when event flag `skipMainMenu` is on (default).
-- Idle HUD (mockup): current song title/artists on top, album art on the left, current-set player names in a two-column grid beside the art, next song + that set’s player names bottom-left, compact YAQ join QR (~176px) on the right. No “YAQ EVENT” title.
-- Admin launches the on-deck set in YAQ → YARG applies players and opens Difficulty Select.
-- After the score screen Continue → idle again for the next group.
+- **Event Mode uses `EventScene`.** Launching with `-event-mode` / `-yaq-event` / `-yaq-url`, or with **YAQ stream** enabled, boots into that scene instead of the main menu.
+- The idle HUD lives on Event Scene (current song, album art, players, next song, join QR). It is not drawn over the main menu, difficulty select, score, or gameplay.
+- Admin launches the on-deck set in YAQ → YARG loads the normal Menu scene only for Difficulty Select, then gameplay / score as usual.
+- After the score screen Continue → back to Event Scene for the next group.
+- **Exit Event Mode** (`eventmode.exit`) leaves Event Scene and loads the normal Menu scene. The WebSocket stays connected so YAQ can re-enter later.
+- **Enter Event Mode** (`eventmode.enter`) loads Event Scene again.
 - **Hot mic** (flag `hotMic`) keeps vocal monitoring up for host announcements.
 - Song library is pushed to YAQ via `library.sync` after scan completes (authoritative hashes).
 
@@ -40,7 +42,7 @@ Pushed as `{ type: "settings.update", flags }` on connect and when admin saves. 
 |------|---------|--------|
 | `hotMic` | `true` | Force vocal monitoring for host talkback |
 | `showUpNextHud` | `true` | Show idle OnGUI up-next / ready HUD |
-| `skipMainMenu` | `true` | Hide main menu while stream is active |
+| `skipMainMenu` | `true` | Hide main menu chrome when Menu Scene is used for Difficulty Select |
 | `openDifficultySelect` | `true` | Open Difficulty Select on `set.prepare` / `set.launch` |
 | `addTestBots` | `false` | Fill empty guitar, bass, drums, and vocals with YAQ Bot test players |
 
@@ -50,8 +52,8 @@ Toggle these under **YAQ Admin → YARG event flags**.
 
 While YARG is connected, Admin → **Enter Event Mode** / **Exit Event Mode** (or `POST /api/admin/yarg/event-mode` with `{ "enabled": true|false }`).
 
-- **Exit** suspends Event Mode (menus/HUD/hot mic/set launch off) but **keeps the WebSocket** so YAQ can re-enter later.
-- **Enter** resumes Event Mode behaviors and re-syncs the library.
+- **Exit** unloads Event Scene and returns to the normal Menu scene (menus/HUD/hot mic/set launch off) but **keeps the WebSocket** so YAQ can re-enter later.
+- **Enter** loads Event Scene, resumes Event Mode behaviors, and re-syncs the library.
 - Fully disconnecting still uses YARG’s Experimental **YAQ stream** toggle (or quitting the game).
 
 ## Message catalog
@@ -75,9 +77,11 @@ While YARG is connected, Admin → **Enter Event Mode** / **Exit Event Mode** (o
 
 ## Files
 
-- `Assets/Script/YAQ/EventMode.cs` — flags + `IsActive`
+- `Assets/Scenes/EventScene.unity` — Event Mode idle scene (camera + HUD host)
+- `Assets/Script/YAQ/EventMode.cs` — flags + `IsActive` + `HubScene`
 - `Assets/Script/YAQ/YaqBridgeClient.cs` — WebSocket client
-- `Assets/Script/YAQ/EventModeController.cs` — HUD, bridge handlers, hot mic
+- `Assets/Script/YAQ/EventModeController.cs` — bridge handlers, hot mic, set launch
+- `Assets/Script/YAQ/EventModeScene.cs` — scene-local idle HUD
 
 ## Notes
 

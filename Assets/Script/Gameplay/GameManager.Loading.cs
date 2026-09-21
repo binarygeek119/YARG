@@ -122,7 +122,7 @@ namespace YARG.Gameplay
                 if (!SongContainer.SongsByHash.TryGetValue(GlobalVariables.State.CurrentReplay.SongChecksum, out var songs))
                 {
                     ToastManager.ToastWarning("Song not present in library");
-                    global.LoadScene(SceneIndex.Menu);
+                    global.LoadHubScene();
                     return;
                 }
                 Song = songs[0];
@@ -131,7 +131,7 @@ namespace YARG.Gameplay
                 if (!LoadReplay())
                 {
                     ToastManager.ToastError("Failed to load replay!");
-                    global.LoadScene(SceneIndex.Menu);
+                    global.LoadHubScene();
                     return;
                 }
 
@@ -185,7 +185,7 @@ namespace YARG.Gameplay
                 YargLogger.LogError(_loadFailureMessage);
                 ToastManager.ToastError(_loadFailureMessage);
 
-                global.LoadScene(SceneIndex.Menu);
+                global.LoadHubScene();
                 return;
             }
 
@@ -249,7 +249,7 @@ namespace YARG.Gameplay
             {
                 ToastManager.ToastError(_loadFailureMessage);
 
-                global.LoadScene(SceneIndex.Menu);
+                global.LoadHubScene();
                 return;
             }
 

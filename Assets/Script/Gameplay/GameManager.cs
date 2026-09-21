@@ -218,7 +218,7 @@ namespace YARG.Gameplay
             {
                 YargLogger.LogError("Null song set when loading gameplay!");
 
-                GlobalVariables.Instance.LoadScene(SceneIndex.Menu);
+                GlobalVariables.Instance.LoadHubScene();
                 return;
             }
 
@@ -826,7 +826,7 @@ namespace YARG.Gameplay
         public void ForceQuitSong()
         {
             GlobalVariables.State = PersistentState.Default;
-            GlobalVariables.Instance.LoadScene(SceneIndex.Menu);
+            GlobalVariables.Instance.LoadHubScene();
         }
 
         public void SetVenueCameraManager(CameraManager cameraManager)

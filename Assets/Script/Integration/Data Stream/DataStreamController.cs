@@ -646,6 +646,7 @@ namespace YARG.Integration
                     break;
 
                 case SceneIndex.Menu:
+                case SceneIndex.Event:
                     CurrentLightingCue = new LightingEvent(LightingType.Menu, 0, 0);
                     EnqueueSceneIndex(SceneIndexByte.Menu);
                     break;

@@ -38,10 +38,11 @@ namespace YARG.Menu.Persistent
         {
             var currentScene = GlobalVariables.Instance.CurrentScene;
             bool isGameplay = currentScene is SceneIndex.Gameplay;
+            bool isEventIdle = currentScene is SceneIndex.Event;
             bool isNotFocused = !Application.isFocused;
             bool didReceiveInput = CheckKeyboardMouse();
 
-            if (didReceiveInput || isGameplay || isNotFocused)
+            if (didReceiveInput || isGameplay || isEventIdle || isNotFocused)
             {
                 ResetTimer();
             }

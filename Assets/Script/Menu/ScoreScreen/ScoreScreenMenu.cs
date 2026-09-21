@@ -478,7 +478,7 @@ namespace YARG.Menu.ScoreScreen
                             {
                                 EventModeController.Instance?.NotifyIdle();
                             }
-                            GlobalVariables.Instance.LoadScene(SceneIndex.Menu);
+                            GlobalVariables.Instance.LoadHubScene();
                         }
                     }
                 });
@@ -486,7 +486,7 @@ namespace YARG.Menu.ScoreScreen
             _endEarlyButtonEntry = new NavigationScheme.Entry(MenuAction.Red, "Menu.ScoreScreen.EndSetlistEarly", () =>
             {
                 GlobalVariables.State.PlayingAShow = false;
-                GlobalVariables.Instance.LoadScene(SceneIndex.Menu);
+                GlobalVariables.Instance.LoadHubScene();
             });
 
             _viewReplayButtonEntry = new NavigationScheme.Entry(MenuAction.Yellow, "Menu.ScoreScreen.ViewReplay", () =>
