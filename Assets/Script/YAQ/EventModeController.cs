@@ -73,6 +73,7 @@ namespace YARG.YAQ
         private int _qrLoadGeneration;
         private float _nextQrRetryAt;
         private readonly Dictionary<string, Sprite> _instrumentIcons = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Texture2D> _instrumentIconTex = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, Texture2D> _hudShapes = new();
         private Texture2D _whiteCircle;
 
@@ -370,14 +371,15 @@ namespace YARG.YAQ
             var qrRect = new Rect(qrX, qrY, qrSize, qrSize);
 
             var midY = areaY + titleH + gap;
-            var midH = Mathf.Max(0f, nextRect.y - gap - midY);
+            var midBottom = nextRect.y - gap;
+            var midH = Mathf.Max(0f, midBottom - midY);
             var artSize = Mathf.Min(artMax, midH, contentW * 0.34f);
             var artRect = new Rect(areaX, midY, artSize, artSize);
             var playersRect = new Rect(
                 areaX + artSize + gap,
                 midY,
                 Mathf.Max(0f, contentW - artSize - gap),
-                Mathf.Max(0f, nextRect.y - midY));
+                midH);
 
             return new EventHudLayout(titleRect, artRect, playersRect, nextRect, qrRect);
         }
@@ -725,18 +727,8 @@ namespace YARG.YAQ
             var topH = Mathf.Max(8f, rect.height - readyH);
             DrawTwoToneRounded(rect, 14, topH, CardTeal, player.Ready ? ReadyGreen : ReadyRed, Color.clear, 0);
 
-            var avatar = 44f;
-            var icon = 40f;
-            var rowY = rect.y + (topH - avatar) * 0.5f;
-            var avatarRect = new Rect(rect.x + 12f, rowY, avatar, avatar);
-            DrawHudAvatar(avatarRect, player.Name, player.Id);
-
-            var nameStyle = _playerNameStyle ?? _bodyStyle;
-            var nameX = avatarRect.xMax + 10f;
-            var iconRect = new Rect(rect.xMax - 12f - icon, rect.y + (topH - icon) * 0.5f, icon, icon);
-            var nameRect = new Rect(nameX, rect.y, Mathf.Max(8f, iconRect.x - 8f - nameX), topH);
-            GUI.Label(nameRect, player.Name, nameStyle);
-            DrawInstrumentBadge(iconRect, player.Instrument);
+            var row = new Rect(rect.x + 12f, rect.y, rect.width - 24f, topH);
+            DrawPackedPlayer(row, player, 44f, 40f, _playerNameStyle ?? _bodyStyle);
 
             var readyRect = new Rect(rect.x + 10f, rect.yMax - readyH, rect.width - 20f, readyH);
             GUI.Label(
@@ -769,51 +761,33 @@ namespace YARG.YAQ
             }
         }
 
-        private void DrawInstrumentBadge(Rect rect, string instrument)
+        private float DrawPackedPlayer(Rect row, HudPlayer player, float avatar, float icon, GUIStyle nameStyle)
+        {
+            var x = row.x;
+            var avatarRect = new Rect(x, row.y + (row.height - avatar) * 0.5f, avatar, avatar);
+            DrawHudAvatar(avatarRect, player.Name, player.Id);
+            x = avatarRect.xMax + 10f;
+
+            var style = nameStyle ?? _playerNameStyle ?? _bodyStyle;
+            var nameW = style != null
+                ? Mathf.Ceil(style.CalcSize(new GUIContent(player.Name ?? string.Empty)).x)
+                : 80f;
+            nameW = Mathf.Min(nameW, Mathf.Max(8f, row.xMax - x - icon - 10f));
+            var nameRect = new Rect(x, row.y, nameW, row.height);
+            GUI.Label(nameRect, player.Name, style);
+            x = nameRect.xMax + 10f;
+
+            var iconRect = new Rect(x, row.y + (row.height - icon) * 0.5f, icon, icon);
+            DrawInstrumentIcon(iconRect, player.Instrument);
+            return iconRect.xMax - row.x;
+        }
+
+        private void DrawInstrumentIcon(Rect rect, string instrument)
         {
             if (rect.width < 4f) return;
-            DrawCircle(rect, Color.white);
-            var sprite = LoadInstrumentIcon(instrument);
-            if (sprite == null) return;
-
-            var inset = rect.width * 0.18f;
-            var iconRect = new Rect(rect.x + inset, rect.y + inset, rect.width - inset * 2f, rect.height - inset * 2f);
-            var prev = GUI.color;
-            GUI.color = new Color(0.08f, 0.1f, 0.12f, 1f);
-            DrawSprite(iconRect, sprite);
-            GUI.color = prev;
-        }
-
-        private void DrawPlayerChip(Rect rect, HudPlayer player)
-        {
-            var avatar = Mathf.Min(rect.height, 36f);
-            var avatarRect = new Rect(rect.x, rect.y + (rect.height - avatar) * 0.5f, avatar, avatar);
-            DrawHudAvatar(avatarRect, player.Name, player.Id);
-
-            var icon = avatar;
-            var iconRect = new Rect(rect.xMax - icon, avatarRect.y, icon, icon);
-            var nameRect = new Rect(
-                avatarRect.xMax + 8f,
-                rect.y,
-                Mathf.Max(8f, iconRect.x - 8f - avatarRect.xMax),
-                rect.height);
-            GUI.Label(nameRect, player.Name, _chipNameStyle ?? _playerNameStyle);
-            DrawInstrumentBadge(iconRect, player.Instrument);
-        }
-
-        private static void DrawSprite(Rect rect, Sprite sprite)
-        {
-            if (sprite == null) return;
-            var tex = sprite.texture;
+            var tex = InstrumentIconTexture(instrument);
             if (tex == null) return;
-
-            var tr = sprite.textureRect;
-            var uv = new Rect(
-                tr.x / tex.width,
-                tr.y / tex.height,
-                tr.width / tex.width,
-                tr.height / tex.height);
-            GUI.DrawTextureWithTexCoords(rect, tex, uv, true);
+            GUI.DrawTexture(rect, tex, ScaleMode.ScaleToFit, true);
         }
 
         private static string InitialGlyph(string name)
@@ -832,7 +806,7 @@ namespace YARG.YAQ
             if (players == null) return;
             foreach (var player in players)
             {
-                LoadInstrumentIcon(player?.instrument);
+                InstrumentIconTexture(player?.instrument);
             }
         }
 
@@ -841,7 +815,7 @@ namespace YARG.YAQ
             if (players == null) return;
             foreach (var player in players)
             {
-                LoadInstrumentIcon(player?.instrument);
+                InstrumentIconTexture(player?.instrument);
             }
         }
 
@@ -866,6 +840,59 @@ namespace YARG.YAQ
 
             _instrumentIcons[instrument] = sprite;
             return sprite;
+        }
+
+        private Texture2D InstrumentIconTexture(string instrument)
+        {
+            if (string.IsNullOrWhiteSpace(instrument)) return null;
+            if (_instrumentIconTex.TryGetValue(instrument, out var cached)) return cached;
+
+            Texture2D tex = null;
+            try
+            {
+                tex = CopySprite(LoadInstrumentIcon(instrument));
+            }
+            catch (Exception ex)
+            {
+                YargLogger.LogException(ex, "YAQ instrument icon copy failed");
+            }
+
+            _instrumentIconTex[instrument] = tex;
+            return tex;
+        }
+
+        private static Texture2D CopySprite(Sprite sprite)
+        {
+            if (sprite == null) return null;
+
+            var source = sprite.texture;
+            var tr = sprite.textureRect;
+            if (source == null || tr.width < 1f || tr.height < 1f) return null;
+
+            var rt = RenderTexture.GetTemporary(source.width, source.height, 0, RenderTextureFormat.ARGB32);
+            Graphics.Blit(source, rt);
+            var prev = RenderTexture.active;
+            RenderTexture.active = rt;
+            var full = new Texture2D(source.width, source.height, TextureFormat.RGBA32, false);
+            full.ReadPixels(new Rect(0, 0, source.width, source.height), 0, 0);
+            full.Apply();
+            RenderTexture.active = prev;
+            RenderTexture.ReleaseTemporary(rt);
+
+            var x = Mathf.Clamp(Mathf.RoundToInt(tr.x), 0, Mathf.Max(0, full.width - 1));
+            var y = Mathf.Clamp(Mathf.RoundToInt(tr.y), 0, Mathf.Max(0, full.height - 1));
+            var w = Mathf.Clamp(Mathf.RoundToInt(tr.width), 1, full.width - x);
+            var h = Mathf.Clamp(Mathf.RoundToInt(tr.height), 1, full.height - y);
+            var crop = new Texture2D(w, h, TextureFormat.RGBA32, false)
+            {
+                hideFlags = HideFlags.HideAndDontSave,
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+            crop.SetPixels(full.GetPixels(x, y, w, h));
+            crop.Apply(false, false);
+            UnityEngine.Object.Destroy(full);
+            return crop;
         }
 
         internal static string InstrumentIconAddress(string instrument)
@@ -957,7 +984,9 @@ namespace YARG.YAQ
             }
 
             var captionH = 22f;
-            var textW = Mathf.Max(80f, nextRect.width * 0.46f);
+            var titleW = MeasureLabelWidth(title, _nextTitleStyle, 80f);
+            var artistW = MeasureLabelWidth(artist, _nextArtistStyle, 80f);
+            var textW = Mathf.Clamp(Mathf.Max(titleW, artistW, 80f), 80f, nextRect.width * 0.55f);
             GUI.Label(
                 new Rect(nextRect.x + pad, nextRect.y + 8f, textW, captionH),
                 "UP NEXT",
@@ -996,14 +1025,26 @@ namespace YARG.YAQ
 
             var chipH = Mathf.Min(44f, nextRect.height - 20f);
             var chipY = nextRect.y + (nextRect.height - chipH) * 0.5f;
-            var chipX = nextRect.x + pad + textW + 16f;
-            const float chipW = 210f;
+            var chipX = nextRect.x + pad + textW + 24f;
+            const float chipGap = 20f;
             for (var i = 0; i < players.Count; i++)
             {
-                var chip = new Rect(chipX + i * (chipW + 12f), chipY, chipW, chipH);
-                if (chip.xMax > nextRect.xMax - 8f) break;
-                DrawPlayerChip(chip, players[i]);
+                var remaining = nextRect.xMax - 8f - chipX;
+                if (remaining < 72f) break;
+                var used = DrawPackedPlayer(
+                    new Rect(chipX, chipY, remaining, chipH),
+                    players[i],
+                    36f,
+                    36f,
+                    _chipNameStyle ?? _playerNameStyle);
+                chipX += used + chipGap;
             }
+        }
+
+        private static float MeasureLabelWidth(string text, GUIStyle style, float fallback)
+        {
+            if (string.IsNullOrEmpty(text) || style == null) return fallback;
+            return Mathf.Ceil(style.CalcSize(new GUIContent(text)).x);
         }
 
         private static void FillRect(Rect rect, Color color)
@@ -1203,6 +1244,12 @@ namespace YARG.YAQ
             }
 
             _hudShapes.Clear();
+            foreach (var tex in _instrumentIconTex.Values)
+            {
+                if (tex != null) Destroy(tex);
+            }
+
+            _instrumentIconTex.Clear();
             if (_whiteCircle != null)
             {
                 Destroy(_whiteCircle);
