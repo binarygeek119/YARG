@@ -585,7 +585,7 @@ namespace YARG.YAQ
             }
             catch (Exception ex)
             {
-                YargLogger.LogFormatWarning("YAQ ads album art HTTP fetch failed: {0}", ex.Message);
+                YargLogger.LogWarning($"YAQ ads album art HTTP fetch failed: {ex.Message}");
             }
 
             YARG.Core.IO.YARGImage image = null;
@@ -737,7 +737,7 @@ namespace YARG.YAQ
             }
             catch (Exception ex)
             {
-                YargLogger.LogFormatWarning("YAQ ads audio load failed: {0}", ex.Message);
+                YargLogger.LogWarning($"YAQ ads audio load failed: {ex.Message}");
             }
 
             Enqueue(() =>
@@ -795,7 +795,7 @@ namespace YARG.YAQ
                 }
                 catch (Exception ex)
                 {
-                    YargLogger.LogFormatWarning("YAQ ads audio play failed: {0}", ex.Message);
+                    YargLogger.LogWarning($"YAQ ads audio play failed: {ex.Message}");
                     StopAdsAudio();
                 }
             });

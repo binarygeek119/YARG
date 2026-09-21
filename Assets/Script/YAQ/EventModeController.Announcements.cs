@@ -39,11 +39,10 @@ namespace YARG.YAQ
                     _announcementQueue.Enqueue(id);
                 }
 
-                YargLogger.LogFormatInfo(
+                YargLogger.LogInfo(
                     scene is SceneIndex.Gameplay or SceneIndex.Score
-                        ? "YAQ announcement queued until Event/Ads: {0}"
-                        : "YAQ announcement queued behind current clip: {0}",
-                    id);
+                        ? $"YAQ announcement queued until Event/Ads: {id}"
+                        : $"YAQ announcement queued behind current clip: {id}");
                 return;
             }
 
@@ -176,7 +175,7 @@ namespace YARG.YAQ
             }
             catch (Exception ex)
             {
-                YargLogger.LogFormatWarning("YAQ announcement fetch failed: {0}", ex.Message);
+                YargLogger.LogWarning($"YAQ announcement fetch failed: {ex.Message}");
             }
 
             Enqueue(() =>
@@ -185,7 +184,7 @@ namespace YARG.YAQ
                 if (bytes == null || bytes.Length < 32)
                 {
                     _announcementLoading = false;
-                    YargLogger.LogFormatWarning("YAQ announcement audio missing for {0}", id);
+                    YargLogger.LogWarning($"YAQ announcement audio missing for {id}");
                     return;
                 }
 
@@ -214,12 +213,12 @@ namespace YARG.YAQ
                     PauseAdsForAnnouncement();
 
                     _announcementMixer.Play();
-                    YargLogger.LogFormatInfo("YAQ announcement playing {0}", id);
+                    YargLogger.LogInfo($"YAQ announcement playing {id}");
                 }
                 catch (Exception ex)
                 {
                     _announcementLoading = false;
-                    YargLogger.LogFormatWarning("YAQ announcement play failed: {0}", ex.Message);
+                    YargLogger.LogWarning($"YAQ announcement play failed: {ex.Message}");
                     DisposeAnnouncementMixer();
                 }
             });
