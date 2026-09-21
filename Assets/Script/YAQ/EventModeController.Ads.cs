@@ -4,8 +4,10 @@ using System.Net.Http;
 using Cysharp.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
+using YARG.Core.Audio;
 using YARG.Core.Logging;
 using YARG.Core.Song;
+using YARG.Settings;
 using YARG.Song;
 
 namespace YARG.YAQ
@@ -53,6 +55,9 @@ namespace YARG.YAQ
         private bool _adsSlideshowActive;
         private bool _adsReturningToEvent;
         private float _adsReturnStartAlpha;
+        private StemMixer _adsMixer;
+        private int _adsAudioGeneration;
+        private string _adsAudioHash;
 
         private void ApplyAdsSeconds(JToken token)
         {
@@ -228,6 +233,7 @@ namespace YARG.YAQ
                 _adsReturningToEvent = false;
                 _adsArtPhase = AdsArtPhase.FadeIn;
                 _adsArtT = Mathf.Clamp01(_adsArtAlpha);
+                ApplyAdsMusicMute();
             }
 
             if (!_adsSlideshowActive)
@@ -251,6 +257,7 @@ namespace YARG.YAQ
                 _adsArtPhase = AdsArtPhase.Idle;
                 _adsArtT = 0f;
                 _adsReturnStartAlpha = Mathf.Clamp01(_adsArtAlpha);
+                FadeAdsMusic(AdsReturnSongFadeSeconds);
             }
 
             if (_adsReturnStartAlpha <= 0.001f)
@@ -374,11 +381,13 @@ namespace YARG.YAQ
             _adsArtT = 0f;
             _adsHoldUntil = 0f;
             RequestAdsCover(_adsSong);
+            RequestAdsAudio(_adsSong);
         }
 
         private void StopAdsSlideshow()
         {
-            if (!_adsSlideshowActive && _adsSong == null && _adsCover == null && !_adsReturningToEvent)
+            if (!_adsSlideshowActive && _adsSong == null && _adsCover == null &&
+                !_adsReturningToEvent && _adsMixer == null)
             {
                 return;
             }
@@ -390,6 +399,7 @@ namespace YARG.YAQ
             _adsArtAlpha = 0f;
             _adsHoldUntil = 0f;
             ClearAdsCover();
+            StopAdsAudio();
         }
 
         private void TickAdsSlideshow()
@@ -398,6 +408,7 @@ namespace YARG.YAQ
             {
                 _adsSong = PickAdsSong(null);
                 RequestAdsCover(_adsSong);
+                RequestAdsAudio(_adsSong);
                 _adsArtPhase = AdsArtPhase.FadeIn;
                 _adsArtT = 0f;
                 _adsArtAlpha = 0f;
@@ -409,6 +420,7 @@ namespace YARG.YAQ
                     if (Time.unscaledTime < _adsHoldUntil) return;
                     _adsArtPhase = AdsArtPhase.FadeOut;
                     _adsArtT = 0f;
+                    FadeAdsMusic(AdsArtFadeSeconds);
                     return;
                 case AdsArtPhase.FadeOut:
                     _adsArtT += Time.unscaledDeltaTime / AdsArtFadeSeconds;
@@ -417,6 +429,7 @@ namespace YARG.YAQ
                     _adsArtAlpha = 0f;
                     _adsSong = PickAdsSong(_adsSong);
                     RequestAdsCover(_adsSong);
+                    RequestAdsAudio(_adsSong);
                     _adsArtPhase = AdsArtPhase.FadeIn;
                     _adsArtT = 0f;
                     return;
@@ -616,6 +629,134 @@ namespace YARG.YAQ
                 finally
                 {
                     image.Dispose();
+                }
+            });
+        }
+
+        internal void ApplyAdsMusicMute()
+        {
+            if (_adsMixer == null) return;
+
+            var target = AdsMusicVolume();
+            if (target <= 0.0001)
+            {
+                _adsMixer.SetVolume(0);
+                return;
+            }
+
+            _adsMixer.FadeIn(target, 0.25);
+        }
+
+        private static double AdsMusicVolume()
+        {
+            if (EventMode.Flags.hotMic) return 0;
+            return SettingsManager.Settings?.PreviewVolume.Value ?? 0.25f;
+        }
+
+        private void FadeAdsMusic(float duration)
+        {
+            if (_adsMixer == null) return;
+            if (AdsMusicVolume() <= 0.0001)
+            {
+                _adsMixer.SetVolume(0);
+                return;
+            }
+
+            _adsMixer.FadeOut(Mathf.Max(0.05f, duration));
+        }
+
+        private void RequestAdsAudio(SongEntry song)
+        {
+            if (song == null)
+            {
+                StopAdsAudio();
+                return;
+            }
+
+            var songHash = song.Hash.ToString();
+            if (_adsAudioHash == songHash && _adsMixer != null) return;
+            _adsAudioHash = songHash;
+            LoadAdsAudioAsync(song, songHash, ++_adsAudioGeneration).Forget();
+        }
+
+        private void StopAdsAudio()
+        {
+            _adsAudioGeneration++;
+            _adsAudioHash = null;
+            if (_adsMixer == null) return;
+            try
+            {
+                _adsMixer.Dispose();
+            }
+            catch
+            {
+                // Mixer may already be torn down with the audio engine.
+            }
+
+            _adsMixer = null;
+        }
+
+        private async UniTaskVoid LoadAdsAudioAsync(SongEntry song, string songHash, int generation)
+        {
+            StemMixer mixer = null;
+            try
+            {
+                var censor = SettingsManager.Settings?.CensorMatureContent.Value ?? false;
+                mixer = await UniTask.RunOnThreadPool(() => song.LoadPreviewAudio(1f, censor));
+            }
+            catch (Exception ex)
+            {
+                YargLogger.LogFormatWarning("YAQ ads audio load failed: {0}", ex.Message);
+            }
+
+            Enqueue(() =>
+            {
+                if (generation != _adsAudioGeneration)
+                {
+                    mixer?.Dispose();
+                    return;
+                }
+
+                if (_adsMixer != null)
+                {
+                    try
+                    {
+                        _adsMixer.Dispose();
+                    }
+                    catch
+                    {
+                        // Mixer may already be torn down with the audio engine.
+                    }
+
+                    _adsMixer = null;
+                }
+
+                _adsAudioHash = songHash;
+                _adsMixer = mixer;
+                if (_adsMixer == null) return;
+
+                var start = 0d;
+                if (!EventMode.AdsPlayFullSong && song.PreviewStartMilliseconds >= 0)
+                {
+                    start = Math.Max(0d, song.PreviewStartSeconds);
+                }
+
+                try
+                {
+                    _adsMixer.SetPosition(start);
+                    var volume = AdsMusicVolume();
+                    _adsMixer.SetVolume(volume);
+                    if (volume > 0.0001)
+                    {
+                        _adsMixer.FadeIn(volume, AdsArtFadeSeconds);
+                    }
+
+                    _adsMixer.Play();
+                }
+                catch (Exception ex)
+                {
+                    YargLogger.LogFormatWarning("YAQ ads audio play failed: {0}", ex.Message);
+                    StopAdsAudio();
                 }
             });
         }

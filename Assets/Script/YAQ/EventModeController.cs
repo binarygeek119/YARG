@@ -1978,6 +1978,7 @@ namespace YARG.YAQ
             EventMode.Flags.CopyFrom(flags ?? EventFlags.Defaults);
             ApplyMainMenuVisibility();
             EnsureHotMics();
+            ApplyAdsMusicMute();
             EventMode.SyncEventGameplaySettings();
             if (_venueSlots.Count > 0)
             {
@@ -3014,10 +3015,21 @@ namespace YARG.YAQ
 
         private void EnsureHotMics()
         {
-            if (!EventMode.Flags.hotMic) return;
-
             try
             {
+                if (!EventMode.Flags.hotMic)
+                {
+                    foreach (var player in PlayerContainer.Players)
+                    {
+                        foreach (var mic in player.Bindings.Microphones)
+                        {
+                            mic.SetMonitoringLevel(0f);
+                        }
+                    }
+
+                    return;
+                }
+
                 if (SettingsManager.Settings.VocalMonitoring.Value < 0.35f)
                 {
                     SettingsManager.Settings.VocalMonitoring.Value = 0.7f;
