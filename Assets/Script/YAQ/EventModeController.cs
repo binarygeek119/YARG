@@ -295,7 +295,7 @@ namespace YARG.YAQ
             }
 
             EnsureStyles();
-            var layout = ComputeHudLayout(Screen.width, Screen.height, MeasureHelpBarHeight());
+            var layout = ComputeHudLayout(Screen.width, Screen.height);
 
             DrawCurrentHeader(layout.TitleRect);
             if (TryGetCurrentSong(out var cover, out _, out _, out _))
@@ -332,43 +332,30 @@ namespace YARG.YAQ
         }
 
         /// <summary>
-        /// Persistent Canvas Help Bar height at 1920×1080 (see PersistentScene).
-        /// </summary>
-        internal const float HelpBarReferenceHeight = 75f;
-
-        internal const float HelpBarGap = 8f;
-
-        /// <summary>
         /// Mockup layout: title top-left, album + rounded player panel, yellow QR
-        /// column on the right, red UP NEXT bar along the bottom.
+        /// bottom-right, red UP NEXT bar flush to the bottom of the Game view.
         /// </summary>
-        internal static EventHudLayout ComputeHudLayout(
-            float screenW,
-            float screenH,
-            float helpBarH = HelpBarReferenceHeight)
+        internal static EventHudLayout ComputeHudLayout(float screenW, float screenH)
         {
             const float artMax = 260f;
             const float qrMax = 220f;
             const float gap = 18f;
 
             var pad = Mathf.Clamp(Mathf.Min(screenW, screenH) * 0.04f, 16f, 40f);
-            var bottomReserve = Mathf.Max(0f, helpBarH) + HelpBarGap;
             var areaX = pad;
             var areaY = pad;
             var areaW = Mathf.Max(1f, screenW - pad * 2f);
-            var areaH = Mathf.Max(1f, screenH - pad - bottomReserve);
 
-            var titleH = Mathf.Clamp(areaH * 0.16f, 72f, 108f);
-            var nextH = Mathf.Clamp(areaH * 0.18f, 100f, 136f);
-            var qrSize = Mathf.Clamp(Mathf.Min(qrMax, areaW * 0.22f, areaH * 0.4f), 150f, qrMax);
-
-            var qrX = areaX + areaW - qrSize;
-            var qrY = areaY + areaH - qrSize;
+            var nextH = Mathf.Clamp(screenH * 0.16f, 100f, 136f);
+            var qrSize = Mathf.Clamp(Mathf.Min(qrMax, areaW * 0.22f, screenH * 0.36f), 150f, qrMax);
+            var qrX = Mathf.Max(areaX, screenW - pad - qrSize);
             var contentW = Mathf.Max(0f, qrX - gap - areaX);
 
+            var nextRect = new Rect(0f, screenH - nextH, qrX, nextH);
+            var qrRect = new Rect(qrX, screenH - qrSize, qrSize, qrSize);
+
+            var titleH = Mathf.Clamp(Mathf.Max(1f, nextRect.y - areaY) * 0.18f, 72f, 108f);
             var titleRect = new Rect(areaX, areaY, contentW, titleH);
-            var nextRect = new Rect(0f, areaY + areaH - nextH, qrX, nextH);
-            var qrRect = new Rect(qrX, qrY, qrSize, qrSize);
 
             var midY = areaY + titleH + gap;
             var midBottom = nextRect.y - gap;
@@ -382,24 +369,6 @@ namespace YARG.YAQ
                 midH);
 
             return new EventHudLayout(titleRect, artRect, playersRect, nextRect, qrRect);
-        }
-
-        internal static float DefaultHelpBarHeight(float screenW, float screenH)
-        {
-            var scale = Mathf.Min(screenW / 1920f, screenH / 1080f);
-            return HelpBarReferenceHeight * Mathf.Max(scale, 0.01f);
-        }
-
-        private static float MeasureHelpBarHeight()
-        {
-            var fallback = DefaultHelpBarHeight(Screen.width, Screen.height);
-            if (HelpBar.Instance == null) return fallback;
-            if (HelpBar.Instance.transform is not RectTransform rect) return fallback;
-
-            var corners = new Vector3[4];
-            rect.GetWorldCorners(corners);
-            var height = Mathf.Abs(corners[1].y - corners[0].y);
-            return height > 1f ? height : fallback;
         }
 
         private bool TryGetCurrentSong(
