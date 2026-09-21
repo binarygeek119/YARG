@@ -35,6 +35,8 @@ namespace YARG.YAQ
         private YaqQueuePreview _preview = new();
         private YaqPlaySet _currentSet;
         private List<YaqSetPlayer> _currentPlayers = new();
+        private readonly Dictionary<string, YargProfile> _venueProfiles = new();
+        private List<YaqVenueProfile> _venueSlots = new();
         private string _phase = "idle";
         private string _status = "Connecting to YAQ…";
         private string _pendingSetId;
@@ -42,6 +44,8 @@ namespace YARG.YAQ
         private GUIStyle _titleStyle;
         private GUIStyle _artistStyle;
         private GUIStyle _bodyStyle;
+        private GUIStyle _playerNameStyle;
+        private GUIStyle _avatarInitialStyle;
         private GUIStyle _mutedStyle;
         private GUIStyle _qrCaptionStyle;
         private GUIStyle _nextTitleStyle;
@@ -154,6 +158,7 @@ namespace YARG.YAQ
             _status = "YAQ stream off";
             ClearCovers();
             ClearQr();
+            YaqProfileAvatar.ClearCache();
             ApplyMainMenuVisibility();
         }
 
@@ -168,6 +173,7 @@ namespace YARG.YAQ
             _phase = "idle";
             ApplyMainMenuVisibility();
             EnsureHotMics();
+            ApplyVenueProfiles(_venueSlots, EventMode.Flags.addTestBots);
             TrySyncLibrary();
             SendState("idle");
             ReportEventModeState();
@@ -188,6 +194,7 @@ namespace YARG.YAQ
             _phase = "idle";
             _status = "Event Mode off (bridge still connected)";
             ClearCovers();
+            RestoreVenueProfileNames();
             ApplyMainMenuVisibility();
             ReportEventModeState();
             GoToMenuSceneIfIdle();
@@ -208,6 +215,7 @@ namespace YARG.YAQ
         {
             ClearCovers();
             ClearQr();
+            YaqProfileAvatar.ClearCache();
             _bridge?.Dispose();
             if (Instance == this) Instance = null;
         }
@@ -570,13 +578,15 @@ namespace YARG.YAQ
         {
             if (names == null || names.Count == 0 || rect.width < 8f) return;
 
+            const float avatar = 48f;
+            const float gap = 12f;
             GUILayout.BeginArea(rect);
             var leftCount = names.Count <= 1 ? names.Count : (names.Count + 1) / 2;
             GUILayout.BeginHorizontal();
             GUILayout.BeginVertical();
             for (var i = 0; i < leftCount; i++)
             {
-                GUILayout.Label(names[i], _bodyStyle);
+                DrawPlayerNameRow(names[i], avatar, gap);
             }
 
             GUILayout.EndVertical();
@@ -586,7 +596,7 @@ namespace YARG.YAQ
                 GUILayout.BeginVertical();
                 for (var i = leftCount; i < names.Count; i++)
                 {
-                    GUILayout.Label(names[i], _bodyStyle);
+                    DrawPlayerNameRow(names[i], avatar, gap);
                 }
 
                 GUILayout.EndVertical();
@@ -594,6 +604,56 @@ namespace YARG.YAQ
 
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
+        }
+
+        private void DrawPlayerNameRow(string name, float avatar, float gap)
+        {
+            GUILayout.BeginHorizontal();
+            var avatarRect = GUILayoutUtility.GetRect(avatar, avatar, GUILayout.Width(avatar), GUILayout.Height(avatar));
+            if (Event.current.type == EventType.Repaint && avatarRect.width > 2f)
+            {
+                try
+                {
+                    var tex = YaqProfileAvatar.ForPlayer(name, PlayerIdFor(name));
+                    if (tex != null)
+                    {
+                        GUI.DrawTexture(avatarRect, tex, ScaleMode.ScaleToFit, true);
+                    }
+                    else if (_avatarInitialStyle != null)
+                    {
+                        GUI.Box(avatarRect, GUIContent.none);
+                        GUI.Label(avatarRect, InitialGlyph(name), _avatarInitialStyle);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    YargLogger.LogException(ex, "YAQ profile avatar draw failed");
+                }
+            }
+
+            GUILayout.Space(gap);
+            GUILayout.Label(name ?? string.Empty, _playerNameStyle ?? _bodyStyle, GUILayout.Height(avatar));
+            GUILayout.EndHorizontal();
+            GUILayout.Space(8f);
+        }
+
+        private static string InitialGlyph(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return "?";
+            foreach (var c in name)
+            {
+                if (char.IsLetterOrDigit(c)) return char.ToUpperInvariant(c).ToString();
+            }
+
+            return name[0].ToString();
+        }
+
+        private string PlayerIdFor(string name)
+        {
+            var current = _currentPlayers?.Find(player => player != null && player.name == name);
+            if (current != null) return current.id ?? current.slotId;
+            var preview = _preview?.players?.Find(player => player != null && player.name == name);
+            return preview?.id ?? preview?.slotId;
         }
 
         private void DrawJoinQr(Rect captionRect, Rect qrRect)
@@ -655,6 +715,20 @@ namespace YARG.YAQ
                     wordWrap = true,
                     clipping = TextClipping.Clip
                 };
+                _playerNameStyle = new GUIStyle(_bodyStyle)
+                {
+                    alignment = TextAnchor.MiddleLeft,
+                    wordWrap = false,
+                    clipping = TextClipping.Clip
+                };
+                _avatarInitialStyle = new GUIStyle(_bodyStyle)
+                {
+                    alignment = TextAnchor.MiddleCenter,
+                    fontSize = 22,
+                    fontStyle = FontStyle.Bold,
+                    wordWrap = false,
+                    clipping = TextClipping.Overflow
+                };
                 _mutedStyle = new GUIStyle(GUI.skin.label)
                 {
                     fontSize = 18,
@@ -702,6 +776,7 @@ namespace YARG.YAQ
                 case "queue.preview":
                     if (EventMode.Suspended) break;
                     _preview = msg["preview"]?.ToObject<YaqQueuePreview>() ?? new YaqQueuePreview();
+                    RememberPreviewPortraits(_preview?.players);
                     RequestCover(true, _preview?.songHash);
                     break;
                 case "set.prepare":
@@ -719,6 +794,19 @@ namespace YARG.YAQ
                     break;
                 case "settings.update":
                     ApplyEventFlags(msg["flags"]?.ToObject<EventFlags>());
+                    break;
+                case "profiles.setup":
+                    ApplyVenueProfiles(
+                        msg["profiles"]?.ToObject<List<YaqVenueProfile>>() ?? new List<YaqVenueProfile>(),
+                        msg.Value<bool?>("addTestBots") ?? EventMode.Flags.addTestBots);
+                    break;
+                case "player.images":
+                case "profile.images":
+                    RememberImageList(msg["players"] as JArray);
+                    break;
+                case "player.image":
+                case "profile.image":
+                    RememberImageToken(msg);
                     break;
                 case "library.request":
                     _librarySynced = false;
@@ -742,7 +830,14 @@ namespace YARG.YAQ
             EventMode.Flags.CopyFrom(flags ?? EventFlags.Defaults);
             ApplyMainMenuVisibility();
             EnsureHotMics();
-            SyncTestBots(GlobalVariables.State.CurrentSong);
+            if (_venueSlots.Count > 0)
+            {
+                ApplyVenueProfiles(_venueSlots, EventMode.Flags.addTestBots);
+            }
+            else
+            {
+                SyncTestBots(GlobalVariables.State.CurrentSong);
+            }
             _bridge?.Send(new
             {
                 type = "settings.ack",
@@ -801,9 +896,16 @@ namespace YARG.YAQ
             }
 
             var song = songs[0];
-            RemoveTestBots();
-            ApplyPlayers(players);
-            SyncTestBots(song);
+            if (_venueSlots.Count > 0)
+            {
+                ApplyPlayers(players);
+            }
+            else
+            {
+                RemoveTestBots();
+                ApplyPlayersSequential(players);
+                SyncTestBots(song);
+            }
 
             GlobalVariables.State.CurrentSong = song;
             GlobalVariables.State.ShowSongs.Clear();
@@ -814,6 +916,7 @@ namespace YARG.YAQ
             _pendingSetId = set.id;
             _currentSet = set;
             _currentPlayers = players;
+            RememberSetPortraits(players);
             _phase = "ready";
             _status = $"Ready: {set.songArtist} — {set.songName}";
             RequestCover(false, set.songHash);
@@ -853,11 +956,144 @@ namespace YARG.YAQ
             }
         }
 
+        private void RestoreVenueProfileNames()
+        {
+            foreach (var slot in _venueSlots)
+            {
+                if (string.IsNullOrEmpty(slot.slotId)) continue;
+                if (!_venueProfiles.TryGetValue(slot.slotId, out var profile) || profile == null) continue;
+                profile.Name = slot.name;
+                profile.IsBot = false;
+                var player = PlayerContainer.GetPlayerFromProfile(profile);
+                if (player != null)
+                {
+                    player.SittingOut = false;
+                }
+            }
+        }
+
+        private void ApplyVenueProfiles(List<YaqVenueProfile> slots, bool addTestBots)
+        {
+            EventMode.Flags.addTestBots = addTestBots;
+            if (slots == null || slots.Count == 0)
+            {
+                return;
+            }
+
+            _venueSlots = slots;
+            RemoveLegacyTestBots();
+
+            var keep = new HashSet<string>();
+            foreach (var slot in _venueSlots)
+            {
+                if (string.IsNullOrEmpty(slot.slotId)) continue;
+                keep.Add(slot.slotId);
+                var instrument = ParseInstrument(slot.instrument);
+                if (!_venueProfiles.TryGetValue(slot.slotId, out var profile) || profile == null)
+                {
+                    profile = PlayerContainer.Profiles.FirstOrDefault(existing => existing.Name == slot.name)
+                        ?? new YargProfile
+                        {
+                            Name = slot.name,
+                            NoteSpeed = 5,
+                            HighwayLength = 1,
+                        };
+                    _venueProfiles[slot.slotId] = profile;
+                }
+
+                profile.Name = slot.name;
+                profile.IsBot = slot.isBot;
+                profile.CurrentInstrument = instrument;
+                profile.PreferredInstrument = instrument;
+                profile.CurrentDifficulty = Difficulty.Expert;
+                profile.DifficultyFallback = Difficulty.Expert;
+                profile.GameMode = instrument.ToNativeGameMode();
+
+                if (!PlayerContainer.Profiles.Contains(profile))
+                {
+                    PlayerContainer.AddProfile(profile);
+                }
+
+                if (!PlayerContainer.IsProfileTaken(profile))
+                {
+                    PlayerContainer.CreatePlayerFromProfile(profile, true);
+                }
+
+                var player = PlayerContainer.GetPlayerFromProfile(profile);
+                if (player != null)
+                {
+                    player.SittingOut = false;
+                }
+
+                YaqProfileAvatar.Remember(slot.slotId, slot.name, slot.dataUrl);
+            }
+
+            foreach (var slotId in _venueProfiles.Keys.ToList())
+            {
+                if (keep.Contains(slotId)) continue;
+                if (_venueProfiles.TryGetValue(slotId, out var extra) && extra != null)
+                {
+                    var player = PlayerContainer.GetPlayerFromProfile(extra);
+                    if (player != null) PlayerContainer.DisposePlayer(player);
+                    PlayerContainer.RemoveProfile(extra);
+                }
+
+                _venueProfiles.Remove(slotId);
+            }
+
+            YargLogger.LogFormatInfo("YAQ venue profiles applied ({0} slots)", _venueSlots.Count);
+        }
+
         private void ApplyPlayers(List<YaqSetPlayer> players)
+        {
+            players ??= new List<YaqSetPlayer>();
+            var usedSlots = new HashSet<string>();
+
+            for (var i = 0; i < players.Count; i++)
+            {
+                var request = players[i];
+                var slotId = string.IsNullOrEmpty(request.slotId) ? $"legacy_{i}" : request.slotId;
+                usedSlots.Add(slotId);
+
+                var instrument = ParseInstrument(request.instrument);
+                var asBot = request.isBot && !request.isSongMaster;
+                var profile = GetOrCreateVenueProfile(slotId, request.name, instrument, asBot);
+
+                profile.Name = request.name;
+                profile.IsBot = asBot;
+                profile.CurrentInstrument = instrument;
+                profile.PreferredInstrument = instrument;
+                profile.CurrentDifficulty = ParseDifficulty(request.difficulty);
+                profile.DifficultyFallback = profile.CurrentDifficulty;
+                profile.GameMode = instrument.ToNativeGameMode();
+
+                if (!PlayerContainer.IsProfileTaken(profile))
+                {
+                    PlayerContainer.CreatePlayerFromProfile(profile, true);
+                }
+
+                var player = PlayerContainer.GetPlayerFromProfile(profile);
+                if (player != null)
+                {
+                    player.SittingOut = false;
+                }
+            }
+
+            foreach (var (slotId, profile) in _venueProfiles)
+            {
+                if (usedSlots.Contains(slotId)) continue;
+                var player = PlayerContainer.GetPlayerFromProfile(profile);
+                if (player != null)
+                {
+                    player.SittingOut = true;
+                }
+            }
+        }
+
+        private void ApplyPlayersSequential(List<YaqSetPlayer> players)
         {
             var profiles = PlayerContainer.Players.ToList();
 
-            // Trim extras when YAQ sends fewer players than currently active
             for (var i = profiles.Count - 1; i >= players.Count; i--)
             {
                 PlayerContainer.DisposePlayer(profiles[i]);
@@ -892,6 +1128,94 @@ namespace YARG.YAQ
                 existing.Profile.CurrentDifficulty = ParseDifficulty(request.difficulty);
                 existing.Profile.DifficultyFallback = existing.Profile.CurrentDifficulty;
             }
+        }
+
+        private YargProfile GetOrCreateVenueProfile(string slotId, string name, Instrument instrument, bool isBot)
+        {
+            if (_venueProfiles.TryGetValue(slotId, out var existing) && existing != null)
+            {
+                return existing;
+            }
+
+            var profile = new YargProfile
+            {
+                Name = name,
+                IsBot = isBot,
+                NoteSpeed = 5,
+                HighwayLength = 1,
+                CurrentInstrument = instrument,
+                PreferredInstrument = instrument,
+                CurrentDifficulty = Difficulty.Expert,
+                DifficultyFallback = Difficulty.Expert,
+                GameMode = instrument.ToNativeGameMode(),
+            };
+            PlayerContainer.AddProfile(profile);
+            _venueProfiles[slotId] = profile;
+            return profile;
+        }
+
+        private static void RemoveLegacyTestBots()
+        {
+            const string prefix = "YAQ Bot ";
+            foreach (var player in PlayerContainer.Players.ToList())
+            {
+                if (player.Profile == null || !player.Profile.IsBot) continue;
+                if (string.IsNullOrEmpty(player.Profile.Name) || !player.Profile.Name.StartsWith(prefix)) continue;
+                var profile = player.Profile;
+                PlayerContainer.DisposePlayer(player);
+                PlayerContainer.RemoveProfile(profile);
+            }
+
+            foreach (var profile in PlayerContainer.Profiles.ToList())
+            {
+                if (profile.IsBot && !string.IsNullOrEmpty(profile.Name) && profile.Name.StartsWith(prefix))
+                {
+                    PlayerContainer.RemoveProfile(profile);
+                }
+            }
+        }
+
+        private void RememberSetPortraits(List<YaqSetPlayer> players)
+        {
+            if (players == null) return;
+            foreach (var player in players)
+            {
+                if (player == null) continue;
+                YaqProfileAvatar.Remember(player.id ?? player.slotId, player.name, player.dataUrl);
+            }
+        }
+
+        private void RememberPreviewPortraits(List<YaqPreviewPlayer> players)
+        {
+            if (players == null) return;
+            foreach (var player in players)
+            {
+                if (player == null) continue;
+                YaqProfileAvatar.Remember(player.id ?? player.slotId, player.name, player.dataUrl);
+            }
+        }
+
+        private static void RememberImageList(JArray players)
+        {
+            if (players == null) return;
+            foreach (var token in players)
+            {
+                if (token is JObject obj)
+                {
+                    RememberImageToken(obj);
+                }
+            }
+        }
+
+        private static void RememberImageToken(JObject obj)
+        {
+            if (obj == null) return;
+            var dataUrl = obj.Value<string>("dataUrl") ?? obj.Value<string>("imageBase64") ??
+                          obj.Value<string>("profileImage");
+            YaqProfileAvatar.Remember(
+                obj.Value<string>("playerId") ?? obj.Value<string>("id") ?? obj.Value<string>("slotId"),
+                obj.Value<string>("name"),
+                dataUrl);
         }
 
         private const string TestBotPrefix = "YAQ Bot ";
@@ -1103,6 +1427,7 @@ namespace YARG.YAQ
             _pendingSetId = null;
             _currentSet = null;
             _currentPlayers = new List<YaqSetPlayer>();
+            RestoreVenueProfileNames();
             ClearCover(false);
         }
 

@@ -81,7 +81,17 @@ namespace YARG.YAQ
                     await _socket.ConnectAsync(new Uri(_url), token);
                     YargLogger.LogFormatInfo("YAQ bridge connected to {0}", _url);
                     Connected?.Invoke();
-                    Send(new { type = "hello", version = "yarg-event-1" });
+                    Send(new
+                    {
+                        type = "hello",
+                        version = "yarg-event-1",
+                        capabilities = new[]
+                        {
+                            "player.image",
+                            "player.images",
+                            "profile.image"
+                        }
+                    });
 
                     var buffer = new byte[1024 * 256];
                     while (_socket.State == WebSocketState.Open && !token.IsCancellationRequested)
@@ -135,9 +145,13 @@ namespace YARG.YAQ
     [Serializable]
     public class YaqPreviewPlayer
     {
+        public string id;
         public string name;
         public string instrument;
         public string difficulty;
+        public string slotId;
+        public string dataUrl;
+        public bool isBot;
     }
 
     [Serializable]
@@ -148,6 +162,20 @@ namespace YARG.YAQ
         public string songHash;
         public string instrument;
         public string difficulty;
+        public string slotId;
+        public string dataUrl;
+        public bool isBot;
+        public bool isSongMaster;
+    }
+
+    [Serializable]
+    public class YaqVenueProfile
+    {
+        public string slotId;
+        public string name;
+        public string instrument;
+        public string dataUrl;
+        public bool isBot;
     }
 
     [Serializable]
