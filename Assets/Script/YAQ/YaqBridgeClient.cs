@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
@@ -71,6 +72,33 @@ namespace YARG.YAQ
 
         public void Dispose() => Stop();
 
+        private const int MaxInboundBytes = 8 * 1024 * 1024;
+
+        private static async Task<string> ReceiveTextAsync(
+            ClientWebSocket socket,
+            byte[] buffer,
+            CancellationToken token)
+        {
+            using var payload = new MemoryStream();
+            WebSocketReceiveResult result;
+            do
+            {
+                result = await socket.ReceiveAsync(buffer, token);
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    return null;
+                }
+
+                payload.Write(buffer, 0, result.Count);
+                if (payload.Length > MaxInboundBytes)
+                {
+                    throw new InvalidOperationException("YAQ bridge message exceeded 8 MB");
+                }
+            } while (!result.EndOfMessage);
+
+            return Encoding.UTF8.GetString(payload.GetBuffer(), 0, (int)payload.Length);
+        }
+
         private async Task RunAsync(CancellationToken token)
         {
             while (!token.IsCancellationRequested)
@@ -93,7 +121,7 @@ namespace YARG.YAQ
                         }
                     });
 
-                    var buffer = new byte[1024 * 256];
+                    var buffer = new byte[64 * 1024];
                     while (_socket.State == WebSocketState.Open && !token.IsCancellationRequested)
                     {
                         while (_outbound.TryDequeue(out var outbound))
@@ -106,13 +134,12 @@ namespace YARG.YAQ
                         timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(250));
                         try
                         {
-                            var result = await _socket.ReceiveAsync(buffer, timeoutCts.Token);
-                            if (result.MessageType == WebSocketMessageType.Close)
+                            var json = await ReceiveTextAsync(_socket, buffer, timeoutCts.Token);
+                            if (json == null)
                             {
                                 break;
                             }
 
-                            var json = Encoding.UTF8.GetString(buffer, 0, result.Count);
                             var obj = JObject.Parse(json);
                             MessageReceived?.Invoke(obj);
                         }

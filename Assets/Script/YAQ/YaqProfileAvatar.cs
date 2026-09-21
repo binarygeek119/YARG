@@ -28,10 +28,10 @@ namespace YARG.YAQ
                 tex.hideFlags = HideFlags.HideAndDontSave;
                 Owned.Add(tex);
 
-                Store("n:" + (name ?? string.Empty), tex);
+                Replace("n:" + (name ?? string.Empty), tex);
                 if (!string.IsNullOrEmpty(playerId))
                 {
-                    Store(playerId, tex);
+                    Replace(playerId, tex);
                 }
             }
             catch (Exception ex)
@@ -73,10 +73,26 @@ namespace YARG.YAQ
             ByKey.Clear();
         }
 
-        private static void Store(string key, Texture2D tex)
+        private static void Replace(string key, Texture2D tex)
         {
             if (string.IsNullOrEmpty(key) || tex == null) return;
+            ByKey.TryGetValue(key, out var previous);
             ByKey[key] = tex;
+            if (previous != null && previous != tex && !StillReferenced(previous))
+            {
+                Owned.Remove(previous);
+                UnityEngine.Object.Destroy(previous);
+            }
+        }
+
+        private static bool StillReferenced(Texture2D tex)
+        {
+            foreach (var existing in ByKey.Values)
+            {
+                if (existing == tex) return true;
+            }
+
+            return false;
         }
 
         private static Texture2D Decode(string dataUrl)
