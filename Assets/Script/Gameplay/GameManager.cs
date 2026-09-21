@@ -703,6 +703,12 @@ namespace YARG.Gameplay
 
             RecordScores(replayInfo);
 
+            if (EventMode.IsActive && EventModeController.Instance != null)
+            {
+                EventModeController.Instance.FinishEventSong();
+                return true;
+            }
+
             // Go to the score screen
             GlobalVariables.Instance.LoadScene(SceneIndex.Score);
             return true;

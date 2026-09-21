@@ -27,7 +27,8 @@ using YARG.Song;
 namespace YARG.YAQ
 {
     /// <summary>
-    /// Event-mode runtime: idle HUD with up-next, YAQ bridge, hot mics, and song launch into Difficulty Select.
+    /// Event-mode runtime: idle HUD with up-next, YAQ bridge, hot mics, 10s ready
+    /// countdown, then gameplay. Song end returns here and YAQ advances the queue.
     /// </summary>
     [DefaultExecutionOrder(-100)]
     public class EventModeController : MonoBehaviour
@@ -45,7 +46,10 @@ namespace YARG.YAQ
         private string _pendingSetId;
         private readonly HashSet<string> _readyKeys = new(StringComparer.OrdinalIgnoreCase);
         private string _readySetId;
-        private bool _launchQueued;
+        private bool _countdownActive;
+        private float _countdownStartedAt;
+        private bool _gameplayQueued;
+        private bool _launchRequested;
         private bool _librarySynced;
         private GUIStyle _titleStyle;
         private GUIStyle _artistStyle;
@@ -60,6 +64,8 @@ namespace YARG.YAQ
         private GUIStyle _nextCaptionStyle;
         private GUIStyle _readyStyle;
         private GUIStyle _chipNameStyle;
+        private GUIStyle _countdownStyle;
+        private GUIStyle _countdownCaptionStyle;
         private GUIStyle _fitScratchStyle;
         private readonly ConcurrentQueue<Action> _mainThread = new();
 
@@ -94,6 +100,7 @@ namespace YARG.YAQ
         private static readonly Color QrGoldDark = new(0.45f, 0.32f, 0.04f, 1f);
         private static readonly Color QrGoldLight = new(0.96f, 0.84f, 0.32f, 1f);
         private static readonly Color NextArtistBlue = new(0.45f, 0.72f, 0.95f, 1f);
+        internal const int ReadyCountdownSeconds = 10;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Bootstrap()
@@ -296,6 +303,8 @@ namespace YARG.YAQ
                 _nextCoverRetryAt = Time.unscaledTime + 3f;
                 RetryMissingCovers();
             }
+
+            TickCountdown();
         }
 
         internal void DrawIdleHud()
@@ -319,6 +328,7 @@ namespace YARG.YAQ
             DrawPlayerPanel(layout.PlayersRect, CurrentHudPlayers());
             DrawNextBar(layout.NextRect);
             DrawQrBlock(layout.QrRect);
+            DrawCountdownOverlay();
         }
 
         internal readonly struct EventHudLayout
@@ -696,16 +706,133 @@ namespace YARG.YAQ
             if (!keepKeys)
             {
                 _readyKeys.Clear();
+                CancelCountdown();
             }
 
-            _launchQueued = false;
+            _gameplayQueued = false;
         }
 
         private void ClearReadyState()
         {
             _readySetId = null;
             _readyKeys.Clear();
-            _launchQueued = false;
+            CancelCountdown();
+            _gameplayQueued = false;
+            _launchRequested = false;
+        }
+
+        private void CancelCountdown()
+        {
+            _countdownActive = false;
+            _countdownStartedAt = 0f;
+        }
+
+        internal static int CountdownSecondsRemaining(
+            float startedAt,
+            float nowUnscaled,
+            int durationSeconds = ReadyCountdownSeconds)
+        {
+            if (durationSeconds <= 0) return 0;
+            var left = durationSeconds - (nowUnscaled - startedAt);
+            if (left <= 0f) return 0;
+            return Mathf.CeilToInt(left);
+        }
+
+        private void TickCountdown()
+        {
+            if (!_countdownActive || _gameplayQueued) return;
+            if (GlobalVariables.Instance == null ||
+                GlobalVariables.Instance.CurrentScene != SceneIndex.Event)
+            {
+                return;
+            }
+
+            if (!AllFeaturedPlayersReady())
+            {
+                CancelCountdown();
+                return;
+            }
+
+            if (CountdownSecondsRemaining(_countdownStartedAt, Time.unscaledTime) > 0) return;
+
+            LaunchGameplayWhenReady();
+        }
+
+        private void DrawCountdownOverlay()
+        {
+            if (!_countdownActive) return;
+
+            EnsureStyles();
+            var secs = CountdownSecondsRemaining(_countdownStartedAt, Time.unscaledTime);
+            FillRect(new Rect(0f, 0f, Screen.width, Screen.height), new Color(0f, 0f, 0f, 0.55f));
+
+            var numberRect = new Rect(0f, Screen.height * 0.28f, Screen.width, Screen.height * 0.32f);
+            var captionRect = new Rect(0f, numberRect.yMax - 12f, Screen.width, 52f);
+            GUI.Label(numberRect, secs.ToString(), _countdownStyle);
+            GUI.Label(
+                captionRect,
+                secs == 0 ? "Starting…" : "Starting in",
+                _countdownCaptionStyle);
+        }
+
+        private void RequestQueueLaunch()
+        {
+            if (_launchRequested) return;
+            _launchRequested = true;
+            _bridge?.Send(new
+            {
+                type = "set.requestLaunch",
+                setId = _currentSet?.id ?? _preview?.setId
+            });
+            YargLogger.LogFormatInfo(
+                "YAQ Event HUD requesting launch for set {0}",
+                _currentSet?.id ?? _preview?.setId);
+        }
+
+        private void LaunchGameplayWhenReady()
+        {
+            if (_gameplayQueued) return;
+            if (!EventMode.IsActive) return;
+            if (GlobalVariables.Instance == null) return;
+            if (GlobalVariables.Instance.CurrentScene != SceneIndex.Event) return;
+
+            if (_currentSet == null || GlobalVariables.State.CurrentSong == null)
+            {
+                RequestQueueLaunch();
+                return;
+            }
+
+            var anyonePlaying = false;
+            try
+            {
+                foreach (var player in PlayerContainer.Players)
+                {
+                    if (player == null || player.SittingOut) continue;
+                    anyonePlaying = true;
+                    break;
+                }
+            }
+            catch
+            {
+                // Bindings may not be ready
+            }
+
+            if (!anyonePlaying)
+            {
+                YargLogger.LogWarning("YAQ Event countdown ended but no seated players");
+                RequestQueueLaunch();
+                return;
+            }
+
+            _gameplayQueued = true;
+            GlobalVariables.State.SongSpeed = 1f;
+            GlobalVariables.State.IsPractice = false;
+            GlobalVariables.State.CurrentReplay = null;
+            _status = $"Starting: {_currentSet.songArtist} — {_currentSet.songName}";
+            YargLogger.LogFormatInfo(
+                "YAQ Event countdown done — loading gameplay {0}",
+                _currentSet.songName);
+            GlobalVariables.Instance.LoadScene(SceneIndex.Gameplay);
         }
 
         private void MarkPlayerReady(HudPlayer player)
@@ -730,26 +857,31 @@ namespace YARG.YAQ
 
         private void TryLaunchWhenAllReady()
         {
-            if (_launchQueued) return;
+            if (_gameplayQueued) return;
             if (!EventMode.IsActive) return;
-            if (_currentSet == null || _phase != "ready") return;
-            if (!AllFeaturedPlayersReady()) return;
-
-            _launchQueued = true;
-            _status = $"Ready: {_currentSet.songArtist} — {_currentSet.songName}";
-            YargLogger.LogFormatInfo(
-                "YAQ Event HUD all players ready — launching {0}",
-                _currentSet.songName);
-
+            if (_phase is "playing" or "score") return;
             if (GlobalVariables.Instance != null &&
-                GlobalVariables.Instance.CurrentScene != SceneIndex.Menu)
+                GlobalVariables.Instance.CurrentScene != SceneIndex.Event)
             {
-                GlobalVariables.Instance.LoadScene(SceneIndex.Menu);
+                return;
             }
 
-            if (EventMode.Flags.openDifficultySelect)
+            if (!AllFeaturedPlayersReady())
             {
-                StartCoroutine(OpenReadyWhenPossible());
+                CancelCountdown();
+                return;
+            }
+
+            if (_countdownActive) return;
+
+            _countdownActive = true;
+            _countdownStartedAt = Time.unscaledTime;
+            _status = "All players ready — starting in 10";
+            YargLogger.LogInfo("YAQ Event HUD all players ready — 10s countdown");
+
+            if (_currentSet == null)
+            {
+                RequestQueueLaunch();
             }
         }
 
@@ -1639,6 +1771,28 @@ namespace YARG.YAQ
                 };
             }
 
+            if (_countdownStyle == null)
+            {
+                _countdownStyle = new GUIStyle(GUI.skin.label)
+                {
+                    alignment = TextAnchor.MiddleCenter,
+                    fontSize = 180,
+                    fontStyle = FontStyle.Bold,
+                    normal = { textColor = Color.white },
+                    wordWrap = false,
+                    clipping = TextClipping.Overflow
+                };
+                _countdownCaptionStyle = new GUIStyle(GUI.skin.label)
+                {
+                    alignment = TextAnchor.MiddleCenter,
+                    fontSize = 28,
+                    fontStyle = FontStyle.Bold,
+                    normal = { textColor = Color.white },
+                    wordWrap = false,
+                    clipping = TextClipping.Clip
+                };
+            }
+
             if (_nextCaptionStyle != null && _nextTitleStyle != null) return;
             _nextCaptionStyle = new GUIStyle(GUI.skin.label)
             {
@@ -2328,6 +2482,32 @@ namespace YARG.YAQ
             SendState("score");
             _phase = "score";
             _status = "Score — continue when ready for the next group";
+        }
+
+        /// <summary>
+        /// Event Mode song finished: tell YAQ, skip the score scene, and return to
+        /// the Event HUD. YAQ completes this set and prepares the next queued song.
+        /// </summary>
+        public void FinishEventSong()
+        {
+            NotifySongEnded();
+            _gameplayQueued = false;
+            _launchRequested = false;
+            _pendingSetId = null;
+            _currentSet = null;
+            _currentPlayers = new List<YaqSetPlayer>();
+            _phase = "idle";
+            _status = "Song complete — waiting for next set";
+            RestoreVenueProfileNames();
+            ClearCover(false);
+            ClearReadyState();
+            BindReadySet(_preview?.setId);
+
+            if (GlobalVariables.Instance != null &&
+                GlobalVariables.Instance.CurrentScene != SceneIndex.Event)
+            {
+                GlobalVariables.Instance.LoadHubScene();
+            }
         }
 
         public void NotifyIdle()
