@@ -345,7 +345,7 @@ namespace YARG.YAQ
 
         /// <summary>
         /// Mockup layout: title top-left, album + rounded player panel, yellow QR
-        /// bottom-right, red UP NEXT bar flush to the bottom of the Game view.
+        /// flush to the right edge, red UP NEXT bar to the QR’s left edge.
         /// </summary>
         internal static EventHudLayout ComputeHudLayout(float screenW, float screenH)
         {
@@ -360,7 +360,7 @@ namespace YARG.YAQ
 
             var nextH = Mathf.Clamp(screenH * 0.16f, 100f, 136f);
             var qrSize = Mathf.Clamp(Mathf.Min(qrMax, areaW * 0.22f, screenH * 0.36f), 150f, qrMax);
-            var qrX = Mathf.Max(areaX, screenW - pad - qrSize);
+            var qrX = Mathf.Max(areaX, screenW - qrSize);
             var contentW = Mathf.Max(0f, qrX - gap - areaX);
 
             var nextRect = new Rect(0f, screenH - nextH, qrX, nextH);
