@@ -996,6 +996,15 @@ namespace YARG.YAQ
                     difficulty = card.Player?.Profile?.CurrentDifficulty.ToString(),
                     score = card.Stats?.TotalScore ?? 0,
                     stars = card.Stats?.Stars ?? 0f,
+                    percent = card.Stats?.Percent ?? 0f,
+                    notesHit = card.Stats?.NotesHit ?? 0,
+                    totalNotes = card.Stats?.TotalNotes ?? 0,
+                    maxCombo = card.Stats?.MaxCombo ?? 0,
+                    starPowerPhrasesHit = card.Stats?.StarPowerPhrasesHit ?? 0,
+                    totalStarPowerPhrases = card.Stats?.TotalStarPowerPhrases ?? 0,
+                    averageMultiplier = card.Stats?.AverageMultiplier ?? 0f,
+                    isFullCombo = card.Stats?.IsFullCombo ?? false,
+                    isHighScore = card.IsHighScore,
                     isBot = card.Player?.Profile?.IsBot ?? false
                 }).ToArray()
             };
