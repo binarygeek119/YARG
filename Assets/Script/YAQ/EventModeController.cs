@@ -1613,7 +1613,7 @@ namespace YARG.YAQ
                     alignment = TextAnchor.MiddleCenter,
                     fontSize = 16,
                     fontStyle = FontStyle.Bold,
-                    normal = { textColor = new Color(0.9f, 0.95f, 0.35f) },
+                    normal = { textColor = Color.white },
                     wordWrap = false,
                     clipping = TextClipping.Clip
                 };
