@@ -56,6 +56,22 @@ namespace YARG
 
         public static EventFlags Flags { get; } = EventFlags.Defaults;
 
+        public const int DefaultAdsSeconds = 15;
+        public const int MinAdsSeconds = 5;
+        public const int MaxAdsSeconds = 120;
+
+        /// <summary>
+        /// Seconds each ads-scene slide stays on a song (from YAQ <c>adsSeconds</c>).
+        /// </summary>
+        public static int AdsSeconds { get; private set; } = DefaultAdsSeconds;
+
+        public static void SetAdsSeconds(int seconds)
+        {
+            if (seconds < MinAdsSeconds) seconds = MinAdsSeconds;
+            if (seconds > MaxAdsSeconds) seconds = MaxAdsSeconds;
+            AdsSeconds = seconds;
+        }
+
         public static bool StreamConnected =>
             Enabled ||
             CommandLineArgs.YaqEvent ||
@@ -152,7 +168,8 @@ namespace YARG
 
         /// <summary>
         /// Idle destination while Event Mode is active. Gameplay, score, and
-        /// difficulty select still use their own scenes.
+        /// difficulty select still use their own scenes. Ads is a temporary
+        /// empty-queue idle scene, not the hub.
         /// </summary>
         public static SceneIndex HubScene => IsActive ? SceneIndex.Event : SceneIndex.Menu;
     }

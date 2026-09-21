@@ -31,7 +31,7 @@ namespace YARG.YAQ
     /// countdown, then gameplay. Song end returns here and YAQ advances the queue.
     /// </summary>
     [DefaultExecutionOrder(-100)]
-    public class EventModeController : MonoBehaviour
+    public partial class EventModeController : MonoBehaviour
     {
         public static EventModeController Instance { get; private set; }
 
@@ -204,6 +204,7 @@ namespace YARG.YAQ
             ClearReadyState();
             _status = "YAQ stream off";
             ClearCovers();
+            ClearAdsCover();
             ClearQr();
             ClearHudShapes();
             YaqProfileAvatar.ClearCache();
@@ -267,6 +268,7 @@ namespace YARG.YAQ
         {
             InputManager.MenuInput -= OnMenuReadyInput;
             ClearCovers();
+            ClearAdsCover();
             ClearQr();
             ClearHudShapes();
             YaqProfileAvatar.ClearCache();
@@ -290,6 +292,8 @@ namespace YARG.YAQ
                     YargLogger.LogException(ex, "YAQ event mode main-thread action failed");
                 }
             }
+
+            TickAds();
 
             if (!EventMode.Enabled) return;
 
@@ -316,6 +320,11 @@ namespace YARG.YAQ
             }
 
             TickCountdown();
+        }
+
+        private void OnGUI()
+        {
+            DrawSceneFadeOverlay();
         }
 
         internal void DrawIdleHud()
@@ -514,13 +523,23 @@ namespace YARG.YAQ
 
         private void DrawFittedLabel(Rect rect, string text, GUIStyle baseStyle, int minSize)
         {
+            DrawFittedLabel(rect, text, baseStyle, minSize, TextAnchor.MiddleLeft);
+        }
+
+        private void DrawFittedLabel(
+            Rect rect,
+            string text,
+            GUIStyle baseStyle,
+            int minSize,
+            TextAnchor alignment)
+        {
             if (string.IsNullOrEmpty(text) || rect.width < 1f || rect.height < 1f) return;
 
             _fitScratchStyle ??= new GUIStyle(baseStyle);
             _fitScratchStyle.font = baseStyle.font;
             _fitScratchStyle.fontStyle = baseStyle.fontStyle;
             _fitScratchStyle.normal.textColor = baseStyle.normal.textColor;
-            _fitScratchStyle.alignment = TextAnchor.MiddleLeft;
+            _fitScratchStyle.alignment = alignment;
             _fitScratchStyle.wordWrap = false;
             _fitScratchStyle.clipping = TextClipping.Clip;
             _fitScratchStyle.padding = new RectOffset(0, 0, 0, 0);
@@ -1921,6 +1940,7 @@ namespace YARG.YAQ
                     break;
                 case "settings.update":
                     ApplyEventFlags(msg["flags"]?.ToObject<EventFlags>());
+                    ApplyAdsSeconds(msg["adsSeconds"]);
                     break;
                 case "profiles.setup":
                     ApplyVenueProfiles(
@@ -2968,7 +2988,8 @@ namespace YARG.YAQ
         private void GoToEventSceneIfIdle()
         {
             if (!CanSwitchEventHub()) return;
-            if (GlobalVariables.Instance.CurrentScene == SceneIndex.Event) return;
+            var scene = GlobalVariables.Instance.CurrentScene;
+            if (scene is SceneIndex.Event or SceneIndex.Ads) return;
             GlobalVariables.Instance.LoadScene(SceneIndex.Event);
         }
 

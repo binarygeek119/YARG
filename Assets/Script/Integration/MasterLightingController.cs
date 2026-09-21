@@ -267,6 +267,7 @@ namespace YARG.Integration
 
                 case SceneIndex.Menu:
                 case SceneIndex.Event:
+                case SceneIndex.Ads:
                     OnApplicationQuit();
                     CurrentLightingCue = new LightingEvent(LightingType.Menu, 0, 0);
                     break;

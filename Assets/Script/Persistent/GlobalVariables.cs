@@ -29,7 +29,8 @@ namespace YARG
         Calibration,
         Score,
         Content,
-        Event
+        Event,
+        Ads
     }
 
     [DefaultExecutionOrder(-5000)]
