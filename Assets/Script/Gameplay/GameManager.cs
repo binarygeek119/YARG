@@ -298,7 +298,8 @@ namespace YARG.Gameplay
 
                 if ((!IsPractice || PracticeManager.HasSelectedSection) &&
                     !DialogManager.Instance.IsDialogShowing &&
-                    !PlayerHasFailed)
+                    !PlayerHasFailed &&
+                    !EventMode.IsActive)
                 {
                     SetPaused(!_pauseMenu.IsOpen);
                 }
@@ -605,6 +606,12 @@ namespace YARG.Gameplay
 
         public void SetPaused(bool paused)
         {
+            // Event Mode must not pause from Start, Escape, device unplug, or focus loss.
+            if (EventMode.IsActive)
+            {
+                return;
+            }
+
             // Does not delegate out to _songRunner.SetPaused since we need extra logic
             if (paused)
             {
@@ -933,6 +940,11 @@ namespace YARG.Gameplay
             {
                 // Pause
                 case MenuAction.Start:
+                    if (EventMode.IsActive)
+                    {
+                        break;
+                    }
+
                     if (_draggableHud.EditMode)
                     {
                         SetEditHUD(false);
