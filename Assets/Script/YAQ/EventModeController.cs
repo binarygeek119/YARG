@@ -16,6 +16,7 @@ using YARG.Menu;
 using YARG.Menu.Main;
 using YARG.Menu.MusicLibrary;
 using YARG.Menu.ScoreScreen;
+using YARG.Menu.Persistent;
 using YARG.Player;
 using YARG.Settings;
 using YARG.Song;
@@ -249,7 +250,7 @@ namespace YARG.YAQ
             }
 
             EnsureStyles();
-            var layout = ComputeHudLayout(Screen.width, Screen.height);
+            var layout = ComputeHudLayout(Screen.width, Screen.height, MeasureHelpBarHeight());
 
             DrawCurrentHeader(layout.TitleRect);
             if (TryGetCurrentSong(out var cover, out _, out _, out var currentNames))
@@ -289,10 +290,20 @@ namespace YARG.YAQ
         }
 
         /// <summary>
-        /// Mockup layout: current title on top, art + two-column players, next song
-        /// bottom-left, compact QR bottom-right (~176px) inside the padded game view.
+        /// Persistent Canvas Help Bar height at 1920×1080 (see PersistentScene).
         /// </summary>
-        internal static EventHudLayout ComputeHudLayout(float screenW, float screenH)
+        internal const float HelpBarReferenceHeight = 75f;
+
+        internal const float HelpBarGap = 8f;
+
+        /// <summary>
+        /// Mockup layout: current title on top, art + two-column players, next song
+        /// bottom-left, compact QR bottom-right (~176px) above the player Help Bar.
+        /// </summary>
+        internal static EventHudLayout ComputeHudLayout(
+            float screenW,
+            float screenH,
+            float helpBarH = HelpBarReferenceHeight)
         {
             const float artMax = 280f;
             const float qrMax = 176f;
@@ -300,10 +311,11 @@ namespace YARG.YAQ
             const float captionH = 22f;
 
             var pad = Mathf.Clamp(Mathf.Min(screenW, screenH) * 0.045f, 16f, 48f);
+            var bottomReserve = Mathf.Max(0f, helpBarH) + HelpBarGap;
             var areaX = pad;
             var areaY = pad;
             var areaW = Mathf.Max(1f, screenW - pad * 2f);
-            var areaH = Mathf.Max(1f, screenH - pad * 2f);
+            var areaH = Mathf.Max(1f, screenH - pad - bottomReserve);
 
             var titleH = Mathf.Clamp(areaH * 0.16f, 56f, 88f);
             var nextH = Mathf.Clamp(areaH * 0.2f, 72f, 110f);
@@ -340,6 +352,24 @@ namespace YARG.YAQ
             var qrRect = new Rect(qrX, qrY, qrSize, qrSize);
 
             return new EventHudLayout(titleRect, artRect, playersRect, nextRect, qrCaptionRect, qrRect);
+        }
+
+        internal static float DefaultHelpBarHeight(float screenW, float screenH)
+        {
+            var scale = Mathf.Min(screenW / 1920f, screenH / 1080f);
+            return HelpBarReferenceHeight * Mathf.Max(scale, 0.01f);
+        }
+
+        private static float MeasureHelpBarHeight()
+        {
+            var fallback = DefaultHelpBarHeight(Screen.width, Screen.height);
+            if (HelpBar.Instance == null) return fallback;
+            if (HelpBar.Instance.transform is not RectTransform rect) return fallback;
+
+            var corners = new Vector3[4];
+            rect.GetWorldCorners(corners);
+            var height = Mathf.Abs(corners[1].y - corners[0].y);
+            return height > 1f ? height : fallback;
         }
 
         private bool TryGetCurrentSong(
