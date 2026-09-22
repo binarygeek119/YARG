@@ -171,6 +171,10 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
+    - target: {fileID: 4748893067600211345, guid: c59fc90e5321ae644b1baecfad526036, type: 3}
+      propertyPath: m_AllowMSAA
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 4748893068835228428, guid: c59fc90e5321ae644b1baecfad526036, type: 3}
       propertyPath: m_Name
       value: MenuBackground

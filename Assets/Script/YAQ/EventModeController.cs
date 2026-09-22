@@ -283,6 +283,12 @@ namespace YARG.YAQ
 
         private void Update()
         {
+            var scene = GlobalVariables.Instance?.CurrentScene;
+            if (scene is SceneIndex.Event or SceneIndex.Ads)
+            {
+                EventModeHudCamera.DisableMsaaForImgui();
+            }
+
             while (_mainThread.TryDequeue(out var action))
             {
                 try

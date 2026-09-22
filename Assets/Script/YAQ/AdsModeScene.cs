@@ -9,6 +9,11 @@ namespace YARG.YAQ
     /// </summary>
     public class AdsModeScene : MonoBehaviour
     {
+        private void OnEnable()
+        {
+            EventModeHudCamera.Bind();
+        }
+
         private void OnGUI()
         {
             EventModeController.Instance?.DrawAdsHud();

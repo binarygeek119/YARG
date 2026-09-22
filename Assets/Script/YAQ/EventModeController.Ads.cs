@@ -658,7 +658,7 @@ namespace YARG.YAQ
                 return;
             }
 
-            var target = AdsMusicVolume();
+            var target = EventMode.AdsMusicVolume;
             if (target <= 0.0001)
             {
                 _adsMixer.SetVolume(0);
@@ -668,19 +668,10 @@ namespace YARG.YAQ
             _adsMixer.FadeIn(target, 0.25);
         }
 
-        private static double AdsMusicVolume()
-        {
-            var preview = SettingsManager.Settings?.PreviewVolume.Value ?? 0.25f;
-            // Hot mic stays live for talkback; keep a quiet bed so the ads song
-            // is still audible instead of going fully silent.
-            if (EventMode.Flags.hotMic) return preview * 0.25;
-            return preview;
-        }
-
         private void FadeAdsMusic(float duration)
         {
             if (_adsMixer == null) return;
-            if (AdsMusicVolume() <= 0.0001)
+            if (EventMode.AdsMusicVolume <= 0.0001)
             {
                 _adsMixer.SetVolume(0);
                 return;
@@ -757,7 +748,7 @@ namespace YARG.YAQ
                     return;
                 }
 
-                var volume = AdsMusicVolume();
+                var volume = EventMode.AdsMusicVolume;
                 try
                 {
                     _adsMixer.SetPosition(0);
@@ -790,8 +781,7 @@ namespace YARG.YAQ
                     }
 
                     YargLogger.LogInfo(
-                        $"YAQ ads audio playing {song.Name} (volume={volume:0.00}" +
-                        $"{(EventMode.Flags.hotMic ? ", hot mic duck" : string.Empty)})");
+                        $"YAQ ads audio playing {song.Name} (volume={volume:0.00})");
                 }
                 catch (Exception ex)
                 {

@@ -70,6 +70,13 @@ namespace YARG
         /// </summary>
         public static bool AdsPlayFullSong { get; private set; } = true;
 
+        /// <summary>
+        /// Ads plays at full mix volume, not the menu preview bus (25%).
+        /// </summary>
+        public const float AdsFullVolume = 1f;
+
+        public static double AdsMusicVolume => AdsFullVolume;
+
         public static void SetAdsSeconds(int seconds)
         {
             if (seconds < MinAdsSeconds) seconds = MinAdsSeconds;
