@@ -1256,22 +1256,30 @@ namespace YARG.YAQ
             var radius = Mathf.Clamp(Mathf.RoundToInt(rect.height * 0.14f), 6, 10);
             DrawTwoToneRounded(rect, radius, topH, CardTeal, player.Ready ? ReadyGreen : ReadyRed, Color.clear, 0);
 
-            var inset = Mathf.Clamp(rect.width * 0.045f, 4f, 8f);
-            var row = new Rect(rect.x + inset, rect.y, rect.width - inset * 2f, topH);
-            var avatar = Mathf.Min(32f, Mathf.Max(14f, topH * 0.7f));
-            var icon = Mathf.Min(28f, avatar * 0.88f);
+            var inset = Mathf.Clamp(rect.width * 0.06f, 6f, 12f);
+            var vPad = Mathf.Clamp(topH * 0.12f, 3f, 8f);
+            var row = new Rect(
+                rect.x + inset,
+                rect.y + vPad,
+                rect.width - inset * 2f,
+                Mathf.Max(8f, topH - vPad * 2f));
+            var avatar = Mathf.Min(row.height * 0.86f, 36f);
+            var icon = avatar;
             var nameStyle = _chipNameStyle ?? _playerNameStyle ?? _bodyStyle;
             if (nameStyle != null)
             {
-                nameStyle.fontSize = Mathf.Clamp(Mathf.RoundToInt(topH * 0.36f), 10, 16);
+                nameStyle.fontSize = Mathf.Clamp(Mathf.RoundToInt(row.height * 0.42f), 10, 16);
+                nameStyle.alignment = TextAnchor.MiddleLeft;
+                nameStyle.padding = new RectOffset(0, 0, 0, 0);
             }
 
-            DrawPackedPlayer(row, player, avatar, icon, nameStyle);
+            DrawPackedPlayer(row, player, avatar, icon, nameStyle, center: true);
 
             var readyRect = new Rect(rect.x + inset, rect.yMax - readyH, rect.width - inset * 2f, readyH);
             var readyLabel = ReadyBarLabel(player.Ready);
             if (_readyStyle != null)
             {
+                _readyStyle.alignment = TextAnchor.MiddleCenter;
                 _readyStyle.fontSize = FontSizeToFit(
                     _readyStyle, readyLabel, readyRect.width, readyRect.height, 8, 16);
             }
@@ -1302,19 +1310,29 @@ namespace YARG.YAQ
             }
         }
 
-        private float DrawPackedPlayer(Rect row, HudPlayer player, float avatar, float icon, GUIStyle nameStyle)
+        private float DrawPackedPlayer(
+            Rect row,
+            HudPlayer player,
+            float avatar,
+            float icon,
+            GUIStyle nameStyle,
+            bool center = false)
         {
-            var gap = Mathf.Clamp(avatar * 0.22f, 4f, 10f);
-            var x = row.x;
-            var avatarRect = new Rect(x, row.y + (row.height - avatar) * 0.5f, avatar, avatar);
-            DrawHudAvatar(avatarRect, player.Name, player.Id);
-            x = avatarRect.xMax + gap;
-
+            var gap = Mathf.Clamp(avatar * 0.18f, 4f, 8f);
             var style = nameStyle ?? _playerNameStyle ?? _bodyStyle;
             var nameW = style != null
                 ? Mathf.Ceil(style.CalcSize(new GUIContent(player.Name ?? string.Empty)).x)
                 : 80f;
-            nameW = Mathf.Min(nameW, Mathf.Max(8f, row.xMax - x - icon - gap));
+            nameW = Mathf.Min(nameW, Mathf.Max(8f, row.width - avatar - icon - gap * 2f));
+            var used = avatar + gap + nameW + gap + icon;
+            var x = center
+                ? row.x + Mathf.Max(0f, (row.width - used) * 0.5f)
+                : row.x;
+
+            var avatarRect = new Rect(x, row.y + (row.height - avatar) * 0.5f, avatar, avatar);
+            DrawHudAvatar(avatarRect, player.Name, player.Id);
+            x = avatarRect.xMax + gap;
+
             var nameRect = new Rect(x, row.y, nameW, row.height);
             GUI.Label(nameRect, player.Name, style);
             x = nameRect.xMax + gap;
