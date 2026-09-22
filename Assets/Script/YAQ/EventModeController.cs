@@ -717,10 +717,18 @@ namespace YARG.YAQ
         {
             if (_currentSet != null && (_phase == "ready" || _phase == "score"))
             {
-                return HudPlayersFromSet(_currentPlayers);
+                if (_phase == "ready" &&
+                    _preview != null &&
+                    !string.IsNullOrEmpty(_preview.setId) &&
+                    !string.Equals(_preview.setId, _currentSet.id, StringComparison.Ordinal))
+                {
+                    return UniqueHudPlayers(HudPlayersFromPreview(_preview.players));
+                }
+
+                return UniqueHudPlayers(HudPlayersFromSet(_currentPlayers));
             }
 
-            return HudPlayersFromPreview(_preview?.players);
+            return UniqueHudPlayers(HudPlayersFromPreview(_preview?.players));
         }
 
         private List<HudPlayer> NextHudPlayers()
@@ -775,6 +783,23 @@ namespace YARG.YAQ
             }
 
             return list;
+        }
+
+        private static List<HudPlayer> UniqueHudPlayers(List<HudPlayer> players)
+        {
+            var unique = new List<HudPlayer>();
+            if (players == null) return unique;
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var player in players)
+            {
+                var key = !string.IsNullOrEmpty(player.Id)
+                    ? player.Id
+                    : $"{player.Name}|{player.Instrument}|{player.SlotId}";
+                if (!seen.Add(key)) continue;
+                unique.Add(player);
+            }
+
+            return unique;
         }
 
         internal static string ReadyBarLabel(bool ready)
@@ -2170,7 +2195,7 @@ namespace YARG.YAQ
             else
             {
                 RemoveTestBots();
-                ApplyPlayersSequential(players);
+                ApplyPlayersSequential(HumansOnly(players));
                 SyncTestBots(song);
             }
 
@@ -2741,6 +2766,7 @@ namespace YARG.YAQ
             }
 
             _preview = preview;
+            DropStalePreparedSet(preview);
             RememberPreviewPortraits(_preview?.players);
             PrefetchInstrumentIcons(_preview?.players);
             PrefetchInstrumentIcons(_preview?.following?.players);
@@ -2798,6 +2824,33 @@ namespace YARG.YAQ
 
             _preview = new YaqQueuePreview();
             ClearCover(true);
+        }
+
+        private void DropStalePreparedSet(YaqQueuePreview preview)
+        {
+            if (_currentSet == null) return;
+            if (_phase is "playing" or "score") return;
+            if (string.IsNullOrEmpty(preview?.setId)) return;
+            if (string.Equals(preview.setId, _currentSet.id, StringComparison.Ordinal)) return;
+
+            _currentSet = null;
+            _currentPlayers = new List<YaqSetPlayer>();
+            ClearCover(false);
+            _phase = "idle";
+            ClearReadyState();
+        }
+
+        private static List<YaqSetPlayer> HumansOnly(List<YaqSetPlayer> players)
+        {
+            var humans = new List<YaqSetPlayer>();
+            if (players == null) return humans;
+            foreach (var player in players)
+            {
+                if (player == null || player.isBot) continue;
+                humans.Add(player);
+            }
+
+            return humans;
         }
 
         public void NotifyIdle()
