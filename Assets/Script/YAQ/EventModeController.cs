@@ -384,6 +384,65 @@ namespace YARG.YAQ
             }
         }
 
+        internal const int PlayerGridColumns = 3;
+        internal const int PlayerGridVisibleRows = 3;
+
+        internal readonly struct PlayerGridLayout
+        {
+            public readonly float CardW;
+            public readonly float CardH;
+            public readonly float Gap;
+            public readonly int Rows;
+            public readonly float ContentHeight;
+            public readonly float MaxScroll;
+
+            public PlayerGridLayout(float cardW, float cardH, float gap, int rows, float contentHeight, float maxScroll)
+            {
+                CardW = cardW;
+                CardH = cardH;
+                Gap = gap;
+                Rows = rows;
+                ContentHeight = contentHeight;
+                MaxScroll = maxScroll;
+            }
+        }
+
+        /// <summary>
+        /// Size player cards so a 3×3 grid fills <paramref name="innerW"/> × <paramref name="innerH"/>.
+        /// Extra rows scroll.
+        /// </summary>
+        internal static PlayerGridLayout ComputePlayerGrid(float innerW, float innerH, int playerCount)
+        {
+            var count = Mathf.Max(0, playerCount);
+            var gap = Mathf.Clamp(Mathf.Min(innerW, innerH) * 0.035f, 6f, 10f);
+            var cardW = Mathf.Max(8f, (innerW - gap * (PlayerGridColumns - 1)) / PlayerGridColumns);
+            var cardH = Mathf.Max(8f, (innerH - gap * (PlayerGridVisibleRows - 1)) / PlayerGridVisibleRows);
+            var rows = Mathf.Max(1, Mathf.CeilToInt(count / (float) PlayerGridColumns));
+            var contentHeight = rows * cardH + Mathf.Max(0, rows - 1) * gap;
+            var maxScroll = Mathf.Max(0f, contentHeight - innerH);
+            return new PlayerGridLayout(cardW, cardH, gap, rows, contentHeight, maxScroll);
+        }
+
+        /// <summary>
+        /// Ping-pong scroll with a short hold at each end.
+        /// </summary>
+        internal static float PlayerGridScrollOffset(float maxScroll, float time)
+        {
+            if (maxScroll <= 0.01f) return 0f;
+            const float pause = 1.35f;
+            const float pixelsPerSecond = 38f;
+            var travel = Mathf.Max(0.4f, maxScroll / pixelsPerSecond);
+            var cycle = (travel + pause) * 2f;
+            var t = Mathf.Repeat(Mathf.Max(0f, time), cycle);
+            if (t < pause) return 0f;
+            t -= pause;
+            if (t < travel) return (t / travel) * maxScroll;
+            t -= travel;
+            if (t < pause) return maxScroll;
+            t -= pause;
+            return (1f - t / travel) * maxScroll;
+        }
+
         /// <summary>
         /// Mockup layout: title top-left, album + rounded player panel, yellow QR
         /// flush to the right edge, red UP NEXT bar to the QR’s left edge.
@@ -1134,40 +1193,62 @@ namespace YARG.YAQ
             DrawRounded(rect, 18, PanelFill, PanelBorder, 3);
             if (players == null || players.Count == 0) return;
 
-            const float pad = 12f;
-            const float cardH = 66f;
-            const float cardW = 190f;
-            const float gap = 10f;
+            var pad = Mathf.Clamp(Mathf.Min(rect.width, rect.height) * 0.04f, 8f, 12f);
             var inner = new Rect(rect.x + pad, rect.y + pad, rect.width - pad * 2f, rect.height - pad * 2f);
             if (inner.width < 8f || inner.height < 8f) return;
 
-            var perRow = Mathf.Max(1, Mathf.FloorToInt((inner.width + gap) / (cardW + gap)));
-            for (var i = 0; i < players.Count; i++)
+            var grid = ComputePlayerGrid(inner.width, inner.height, players.Count);
+            var scroll = players.Count > PlayerGridColumns * PlayerGridVisibleRows
+                ? PlayerGridScrollOffset(grid.MaxScroll, Time.unscaledTime)
+                : 0f;
+
+            GUI.BeginGroup(inner);
+            try
             {
-                var col = i % perRow;
-                var row = i / perRow;
-                var x = inner.x + col * (cardW + gap);
-                var y = inner.y + row * (cardH + gap);
-                if (y + cardH > inner.yMax + 1f) break;
-                DrawPlayerCard(new Rect(x, y, cardW, cardH), players[i]);
+                for (var i = 0; i < players.Count; i++)
+                {
+                    var col = i % PlayerGridColumns;
+                    var row = i / PlayerGridColumns;
+                    var card = new Rect(
+                        col * (grid.CardW + grid.Gap),
+                        row * (grid.CardH + grid.Gap) - scroll,
+                        grid.CardW,
+                        grid.CardH);
+                    if (card.yMax < 0f || card.y > inner.height) continue;
+                    DrawPlayerCard(card, players[i]);
+                }
+            }
+            finally
+            {
+                GUI.EndGroup();
             }
         }
 
         private void DrawPlayerCard(Rect rect, HudPlayer player)
         {
-            const float readyH = 22f;
+            var readyH = Mathf.Clamp(rect.height * 0.34f, 12f, 22f);
             var topH = Mathf.Max(8f, rect.height - readyH);
-            DrawTwoToneRounded(rect, 10, topH, CardTeal, player.Ready ? ReadyGreen : ReadyRed, Color.clear, 0);
+            var radius = Mathf.Clamp(Mathf.RoundToInt(rect.height * 0.14f), 6, 10);
+            DrawTwoToneRounded(rect, radius, topH, CardTeal, player.Ready ? ReadyGreen : ReadyRed, Color.clear, 0);
 
-            var row = new Rect(rect.x + 8f, rect.y, rect.width - 16f, topH);
-            DrawPackedPlayer(row, player, 32f, 28f, _chipNameStyle ?? _playerNameStyle ?? _bodyStyle);
+            var inset = Mathf.Clamp(rect.width * 0.045f, 4f, 8f);
+            var row = new Rect(rect.x + inset, rect.y, rect.width - inset * 2f, topH);
+            var avatar = Mathf.Min(32f, Mathf.Max(14f, topH * 0.7f));
+            var icon = Mathf.Min(28f, avatar * 0.88f);
+            var nameStyle = _chipNameStyle ?? _playerNameStyle ?? _bodyStyle;
+            if (nameStyle != null)
+            {
+                nameStyle.fontSize = Mathf.Clamp(Mathf.RoundToInt(topH * 0.36f), 10, 16);
+            }
 
-            var readyRect = new Rect(rect.x + 8f, rect.yMax - readyH, rect.width - 16f, readyH);
+            DrawPackedPlayer(row, player, avatar, icon, nameStyle);
+
+            var readyRect = new Rect(rect.x + inset, rect.yMax - readyH, rect.width - inset * 2f, readyH);
             var readyLabel = ReadyBarLabel(player.Ready);
             if (_readyStyle != null)
             {
                 _readyStyle.fontSize = FontSizeToFit(
-                    _readyStyle, readyLabel, readyRect.width, readyRect.height, 10, 16);
+                    _readyStyle, readyLabel, readyRect.width, readyRect.height, 8, 16);
             }
             GUI.Label(readyRect, readyLabel, _readyStyle);
         }
@@ -1198,19 +1279,20 @@ namespace YARG.YAQ
 
         private float DrawPackedPlayer(Rect row, HudPlayer player, float avatar, float icon, GUIStyle nameStyle)
         {
+            var gap = Mathf.Clamp(avatar * 0.22f, 4f, 10f);
             var x = row.x;
             var avatarRect = new Rect(x, row.y + (row.height - avatar) * 0.5f, avatar, avatar);
             DrawHudAvatar(avatarRect, player.Name, player.Id);
-            x = avatarRect.xMax + 10f;
+            x = avatarRect.xMax + gap;
 
             var style = nameStyle ?? _playerNameStyle ?? _bodyStyle;
             var nameW = style != null
                 ? Mathf.Ceil(style.CalcSize(new GUIContent(player.Name ?? string.Empty)).x)
                 : 80f;
-            nameW = Mathf.Min(nameW, Mathf.Max(8f, row.xMax - x - icon - 10f));
+            nameW = Mathf.Min(nameW, Mathf.Max(8f, row.xMax - x - icon - gap));
             var nameRect = new Rect(x, row.y, nameW, row.height);
             GUI.Label(nameRect, player.Name, style);
-            x = nameRect.xMax + 10f;
+            x = nameRect.xMax + gap;
 
             var iconRect = new Rect(x, row.y + (row.height - icon) * 0.5f, icon, icon);
             DrawInstrumentIcon(iconRect, player.Instrument);
