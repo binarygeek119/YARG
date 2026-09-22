@@ -36,6 +36,31 @@
 
 YARG (a.k.a. Yet Another Rhythm Game) is a free, open-source, plastic guitar game that is still in development. It supports guitar (five fret), drums (plastic or e-kit), vocals, pro-guitar, and more! YARG is still in active development, so there may be bugs and missing features.
 
+> [!NOTE]
+> **This repository is a fork** of [YARC-Official/YARG](https://github.com/YARC-Official/YARG) with **YAQ Event Mode** for live venue nights. Official YARG builds and the [YARC Launcher](https://github.com/YARC-Official/YARC-Launcher/releases/) do **not** include this fork. Use this tree (or a build of it) together with [YAQ](https://github.com/binarygeek119/yaq).
+
+## Event Mode (this fork)
+
+This fork is driven by [YAQ (Yet Another Queue)](https://github.com/binarygeek119/yaq): guests browse and join from their phones on the LAN. YARG shows the Event HUD (and ads when the queue is empty), then gameplay. Guest scores stay in YAQ — Event Mode does not write YARG local scores or replays.
+
+**YAQ**
+
+- Source: [github.com/binarygeek119/yaq](https://github.com/binarygeek119/yaq)
+- Binaries (rolling **Latest**): [yaq/releases/latest](https://github.com/binarygeek119/yaq/releases/latest)
+  - Linux: [yaq-linux-x64](https://github.com/binarygeek119/yaq/releases/download/latest/yaq-linux-x64)
+  - Windows: [yaq-windows-x64.exe](https://github.com/binarygeek119/yaq/releases/download/latest/yaq-windows-x64.exe)
+
+1. Start YAQ (`npm start` from the repo, or run the binary above). On first run open `/setup` and pick an admin password.
+2. Launch **this** YARG with Event Mode:
+
+```bash
+./YARG -event-mode -yaq-url "ws://127.0.0.1:3000/ws?role=yarg"
+```
+
+3. In YAQ Admin, **Exit Event Mode**, bind controllers to venue slots (`guitar_01`, `bass_01`, `drums_01`, `mic_01`, …) on YARG’s Profiles screen, then **Enter Event Mode** again.
+
+Venue slots, bots, ads, and the WebSocket protocol are documented in [EVENT_MODE.md](EVENT_MODE.md). YAQ pages and the event-night checklist are in the [YAQ README](https://github.com/binarygeek119/yaq/blob/main/README.md).
+
 ## 👉 Disclaimer
 
 > [!IMPORTANT]
@@ -47,6 +72,7 @@ YARG (a.k.a. Yet Another Rhythm Game) is a free, open-source, plastic guitar gam
 
 ## 📃 Table of Contents
 
+- [Event Mode (this fork)](#event-mode-this-fork)
 - [👉 Disclaimer](#-disclaimer)
 - [📃 Table of Contents](#-table-of-contents)
 - [📥 Downloading and Playing](#-downloading-and-playing)
@@ -63,7 +89,9 @@ YARG (a.k.a. Yet Another Rhythm Game) is a free, open-source, plastic guitar gam
 
 ## 📥 Downloading and Playing
 
-**It is recommended you download YARG via the [YARC Launcher](https://github.com/YARC-Official/YARC-Launcher/releases/).** Downloading the portable option is not recommended as some features may not work.
+For **Event Mode**, do not use the YARC Launcher’s official YARG build. Run [YAQ](https://github.com/binarygeek119/yaq/releases/latest) and a build of **this fork** (see [Event Mode](#event-mode-this-fork)).
+
+**It is recommended you download official YARG via the [YARC Launcher](https://github.com/YARC-Official/YARC-Launcher/releases/).** Downloading the portable option is not recommended as some features may not work.
 
 ### YARC Launcher (All Platforms)
 

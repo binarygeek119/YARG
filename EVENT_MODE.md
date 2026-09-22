@@ -1,10 +1,14 @@
 # YARG Event Mode (YAQ)
 
-This fork of [YARG](https://github.com/YARC-Official/YARG) adds **YAQ Event Mode**: the game is driven by the local [YAQ](../yaq) queue app. Guests browse songs and join from their phones; YARG only shows the ready (difficulty select) and score screens.
+This fork of [YARG](https://github.com/YARC-Official/YARG) adds **YAQ Event Mode**: the game is driven by [YAQ](https://github.com/binarygeek119/yaq) (Yet Another Queue). Guests browse songs and join from their phones; YARG shows the Event HUD, ads when the queue is empty, then gameplay. Guest scores stay in YAQ.
+
+- YAQ source: [github.com/binarygeek119/yaq](https://github.com/binarygeek119/yaq)
+- YAQ binaries: [releases/latest](https://github.com/binarygeek119/yaq/releases/latest) ([Linux](https://github.com/binarygeek119/yaq/releases/download/latest/yaq-linux-x64), [Windows](https://github.com/binarygeek119/yaq/releases/download/latest/yaq-windows-x64.exe))
+- YAQ README: [pages and event-night checklist](https://github.com/binarygeek119/yaq/blob/main/README.md)
 
 ## Launch
 
-1. Start YAQ (`cd ~/Projects/yaq && npm start`).
+1. Start [YAQ](https://github.com/binarygeek119/yaq) (`npm start`, or a [binary](https://github.com/binarygeek119/yaq/releases/latest)).
 2. Open Unity and enable **Settings → Experimental → YAQ stream**, **or** launch a built binary with event mode:
 
 ```bash
