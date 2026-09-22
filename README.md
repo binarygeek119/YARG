@@ -39,6 +39,9 @@ YARG (a.k.a. Yet Another Rhythm Game) is a free, open-source, plastic guitar gam
 > [!NOTE]
 > **This repository is a fork** of [YARC-Official/YARG](https://github.com/YARC-Official/YARG) with **YAQ Event Mode** for live venue nights. Official YARG builds and the [YARC Launcher](https://github.com/YARC-Official/YARC-Launcher/releases/) do **not** include this fork. Use this tree (or a build of it) together with [YAQ](https://github.com/binarygeek119/yaq).
 
+> [!WARNING]
+> **Proof of concept, written by AI.** This Event Mode work is a working reference, not a handwritten production patch. The idea is for someone to take what is proven here and reimplement it on a clean YARG start with handwritten code.
+
 ## Event Mode (this fork)
 
 This fork is driven by [YAQ (Yet Another Queue)](https://github.com/binarygeek119/yaq): guests browse and join from their phones on the LAN. YARG shows the Event HUD (and ads when the queue is empty), then gameplay. Guest scores stay in YAQ — Event Mode does not write YARG local scores or replays.

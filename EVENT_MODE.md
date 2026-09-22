@@ -2,6 +2,8 @@
 
 This fork of [YARG](https://github.com/YARC-Official/YARG) adds **YAQ Event Mode**: the game is driven by [YAQ](https://github.com/binarygeek119/yaq) (Yet Another Queue). Guests browse songs and join from their phones; YARG shows the Event HUD, ads when the queue is empty, then gameplay. Guest scores stay in YAQ.
 
+**Proof of concept, written by AI.** Treat this as a working reference. The intent is for someone to take the behavior proven here and reimplement it on a clean YARG start with handwritten code.
+
 - YAQ source: [github.com/binarygeek119/yaq](https://github.com/binarygeek119/yaq)
 - YAQ binaries: [releases/latest](https://github.com/binarygeek119/yaq/releases/latest) ([Linux](https://github.com/binarygeek119/yaq/releases/download/latest/yaq-linux-x64), [Windows](https://github.com/binarygeek119/yaq/releases/download/latest/yaq-windows-x64.exe))
 - YAQ README: [pages and event-night checklist](https://github.com/binarygeek119/yaq/blob/main/README.md)
