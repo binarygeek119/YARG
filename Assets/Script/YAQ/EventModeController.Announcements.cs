@@ -103,6 +103,8 @@ namespace YARG.YAQ
             if (_adsMixer == null || scene != SceneIndex.Ads) return;
             try
             {
+                BeginAdsStemMix();
+                _adsMixer.SetVolume(EventMode.AdsMusicVolume);
                 _adsMixer.Play();
             }
             catch

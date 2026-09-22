@@ -60,6 +60,8 @@ namespace YARG.YAQ
         private int _adsAudioGeneration;
         private string _adsAudioHash;
         private float _adsHoldFrozenAt;
+        private bool _adsStemSettingsCaptured;
+        private bool _adsStemSettingsRestore;
 
         private void ApplyAdsSeconds(JToken token)
         {
@@ -665,7 +667,8 @@ namespace YARG.YAQ
                 return;
             }
 
-            _adsMixer.FadeIn(target, 0.25);
+            BeginAdsStemMix();
+            _adsMixer.SetVolume(target);
         }
 
         private void FadeAdsMusic(float duration)
@@ -703,7 +706,11 @@ namespace YARG.YAQ
 
         private void DisposeAdsMixer()
         {
-            if (_adsMixer == null) return;
+            if (_adsMixer == null)
+            {
+                EndAdsStemMix();
+                return;
+            }
             try
             {
                 _adsMixer.Dispose();
@@ -714,6 +721,27 @@ namespace YARG.YAQ
             }
 
             _adsMixer = null;
+            EndAdsStemMix();
+        }
+
+        private void BeginAdsStemMix()
+        {
+            if (!_adsStemSettingsCaptured)
+            {
+                _adsStemSettingsRestore = StemSettings.ApplySettings;
+                _adsStemSettingsCaptured = true;
+            }
+
+            // Gameplay mute-on-miss can leave stem volumes ducked. Ads uses the
+            // full mix at EventMode.AdsFullVolume, same as a song at DEFAULT_VOLUME.
+            StemSettings.ApplySettings = false;
+        }
+
+        private void EndAdsStemMix()
+        {
+            if (!_adsStemSettingsCaptured) return;
+            StemSettings.ApplySettings = _adsStemSettingsRestore;
+            _adsStemSettingsCaptured = false;
         }
 
         private async UniTaskVoid LoadAdsAudioAsync(SongEntry song, string songHash, int generation)
@@ -724,7 +752,7 @@ namespace YARG.YAQ
                 var censor = SettingsManager.Settings?.CensorMatureContent.Value ?? false;
                 // Full song stems, not preview.ogg / preview.mp3.
                 mixer = await UniTask.RunOnThreadPool(() =>
-                    song.LoadAudio(1f, 0, censor, SongStem.Crowd));
+                    song.LoadAudio(1f, EventMode.AdsFullVolume, censor, SongStem.Crowd));
             }
             catch (Exception ex)
             {
@@ -751,8 +779,9 @@ namespace YARG.YAQ
                 var volume = EventMode.AdsMusicVolume;
                 try
                 {
+                    BeginAdsStemMix();
                     _adsMixer.SetPosition(0);
-                    _adsMixer.SetVolume(0);
+                    _adsMixer.SetVolume(volume);
                     if (AnnouncementBusy)
                     {
                         PauseAdsForAnnouncement();
@@ -766,11 +795,6 @@ namespace YARG.YAQ
                                 $"YAQ ads audio play failed ({playResult}) for {song.Name}");
                             StopAdsAudio();
                             return;
-                        }
-
-                        if (volume > 0.0001)
-                        {
-                            _adsMixer.FadeIn(volume, AdsArtFadeSeconds);
                         }
                     }
 
