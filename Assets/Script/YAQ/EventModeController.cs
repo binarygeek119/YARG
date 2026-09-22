@@ -78,6 +78,7 @@ namespace YARG.YAQ
         private bool _currentCoverFlipped;
         private bool _previewCoverFlipped;
         private float _nextCoverRetryAt;
+        private string _lastEndedSetId;
 
         private Texture2D _qrTexture;
         private string _qrJoinUrl;
@@ -1922,16 +1923,7 @@ namespace YARG.YAQ
                     break;
                 case "queue.preview":
                     if (EventMode.Suspended) break;
-                    _preview = msg["preview"]?.ToObject<YaqQueuePreview>() ?? new YaqQueuePreview();
-                    RememberPreviewPortraits(_preview?.players);
-                    PrefetchInstrumentIcons(_preview?.players);
-                    PrefetchInstrumentIcons(_preview?.following?.players);
-                    RequestCover(true, _preview?.songHash);
-                    if (_currentSet == null || _phase == "idle")
-                    {
-                        if (string.IsNullOrEmpty(_preview?.setId)) ClearReadyState();
-                        else BindReadySet(_preview.setId);
-                    }
+                    ApplyQueuePreview(msg["preview"]?.ToObject<YaqQueuePreview>());
                     break;
                 case "set.prepare":
                     if (EventMode.Suspended)
@@ -2060,6 +2052,15 @@ namespace YARG.YAQ
                 SendError("invalid_set", set?.id, set?.songHash, "set.prepare missing song hash");
                 return;
             }
+
+            if (!string.IsNullOrEmpty(_lastEndedSetId) &&
+                string.Equals(set.id, _lastEndedSetId, StringComparison.Ordinal))
+            {
+                YargLogger.LogInfo("YAQ ignoring set.prepare for the set that just ended");
+                return;
+            }
+
+            _lastEndedSetId = null;
 
             if (!SongContainer.SongsByHash.TryGetValue(HashWrapper.FromString(set.songHash), out var songs) ||
                 songs == null || songs.Count == 0)
@@ -2629,23 +2630,11 @@ namespace YARG.YAQ
             _gameplayQueued = false;
             _launchRequested = false;
             _pendingSetId = null;
-            _currentSet = null;
-            _currentPlayers = new List<YaqSetPlayer>();
             _phase = "idle";
             _status = "Song complete — waiting for next set";
             RestoreVenueProfileNames();
-            ClearCover(false);
             ClearReadyState();
-
-            // Last song in the queue: don't keep its art or players on the Event HUD.
-            if (_preview != null &&
-                _preview.following == null &&
-                (string.IsNullOrEmpty(_preview.setId) ||
-                 string.Equals(_preview.setId, endedSetId, StringComparison.Ordinal)))
-            {
-                _preview = new YaqQueuePreview();
-                ClearCover(true);
-            }
+            ClearFinishedQueueDisplay(endedSetId);
 
             BindReadySet(_preview?.setId);
 
@@ -2654,6 +2643,79 @@ namespace YARG.YAQ
             {
                 GlobalVariables.Instance.LoadHubScene();
             }
+        }
+
+        private void ApplyQueuePreview(YaqQueuePreview incoming)
+        {
+            var preview = incoming ?? new YaqQueuePreview();
+            if (!string.IsNullOrEmpty(_lastEndedSetId) &&
+                string.Equals(preview.setId, _lastEndedSetId, StringComparison.Ordinal))
+            {
+                preview = new YaqQueuePreview();
+            }
+            else if (!string.IsNullOrEmpty(preview.setId))
+            {
+                _lastEndedSetId = null;
+            }
+
+            _preview = preview;
+            RememberPreviewPortraits(_preview?.players);
+            PrefetchInstrumentIcons(_preview?.players);
+            PrefetchInstrumentIcons(_preview?.following?.players);
+            if (string.IsNullOrEmpty(_preview?.songHash))
+            {
+                ClearCover(true);
+            }
+            else
+            {
+                RequestCover(true, _preview.songHash);
+            }
+
+            if (_currentSet == null || _phase == "idle")
+            {
+                if (string.IsNullOrEmpty(_preview?.setId)) ClearReadyState();
+                else BindReadySet(_preview.setId);
+            }
+        }
+
+        private void ClearFinishedQueueDisplay(string endedSetId)
+        {
+            _lastEndedSetId = endedSetId;
+            _currentSet = null;
+            _currentPlayers = new List<YaqSetPlayer>();
+            ClearCover(false);
+            GlobalVariables.State.CurrentSong = null;
+
+            if (_preview == null)
+            {
+                _preview = new YaqQueuePreview();
+                ClearCover(true);
+                return;
+            }
+
+            var previewIsEnded = string.IsNullOrEmpty(_preview.setId) ||
+                                 string.Equals(_preview.setId, endedSetId, StringComparison.Ordinal);
+            if (!previewIsEnded) return;
+
+            var following = _preview.following;
+            if (following != null &&
+                (!string.IsNullOrEmpty(following.songHash) ||
+                 !string.IsNullOrEmpty(following.songName)))
+            {
+                _preview = new YaqQueuePreview
+                {
+                    songHash = following.songHash,
+                    songName = following.songName,
+                    songArtist = following.songArtist,
+                    players = following.players ?? new List<YaqPreviewPlayer>(),
+                    following = null
+                };
+                RequestCover(true, _preview.songHash);
+                return;
+            }
+
+            _preview = new YaqQueuePreview();
+            ClearCover(true);
         }
 
         public void NotifyIdle()

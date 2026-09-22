@@ -255,6 +255,7 @@ namespace YARG.Settings
 
             private static void RefreshSongs()
             {
+                if (SettingsManager.Settings == null) return;
                 SongContainer.RequestContainerRefresh();
                 MusicLibraryMenu.SetReload(MusicLibraryReloadState.Full);
                 HistoryMenu.ForceUpdate = true;
