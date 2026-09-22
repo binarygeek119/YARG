@@ -269,6 +269,7 @@ namespace YARG.YAQ
         private void OnDestroy()
         {
             InputManager.MenuInput -= OnMenuReadyInput;
+            RestoreVenueProfileNames();
             ClearCovers();
             ClearAdsCover();
             StopAnnouncement();
@@ -2122,7 +2123,7 @@ namespace YARG.YAQ
             }
             else
             {
-                SyncTestBots(GlobalVariables.State.CurrentSong);
+                RemoveLegacyTestBots();
             }
             _bridge?.Send(new
             {
@@ -2212,9 +2213,8 @@ namespace YARG.YAQ
             }
             else
             {
-                RemoveTestBots();
+                RemoveLegacyTestBots();
                 ApplyPlayersSequential(HumansOnly(players));
-                SyncTestBots(song);
             }
 
             SitOutMissingParts(song);
@@ -2285,25 +2285,19 @@ namespace YARG.YAQ
             RemoveLegacyTestBots();
 
             var keep = new HashSet<string>();
+            var taken = new HashSet<YargProfile>();
+            var nextProfiles = new Dictionary<string, YargProfile>();
             foreach (var slot in _venueSlots)
             {
                 if (string.IsNullOrEmpty(slot.slotId)) continue;
                 keep.Add(slot.slotId);
                 var instrument = ParseInstrument(slot.instrument);
-                if (!_venueProfiles.TryGetValue(slot.slotId, out var profile) || profile == null)
-                {
-                    profile = PlayerContainer.Profiles.FirstOrDefault(existing => existing.Name == slot.name)
-                        ?? new YargProfile
-                        {
-                            Name = slot.name,
-                            NoteSpeed = 5,
-                            HighwayLength = 1,
-                        };
-                    _venueProfiles[slot.slotId] = profile;
-                }
+                var profile = FindOrCreateVenueProfile(slot, instrument, taken);
+                nextProfiles[slot.slotId] = profile;
+                taken.Add(profile);
 
                 profile.Name = slot.name;
-                profile.IsBot = slot.isBot;
+                profile.IsBot = false;
                 profile.CurrentInstrument = instrument;
                 profile.PreferredInstrument = instrument;
                 profile.CurrentDifficulty = Difficulty.Expert;
@@ -2326,14 +2320,19 @@ namespace YARG.YAQ
             foreach (var slotId in _venueProfiles.Keys.ToList())
             {
                 if (keep.Contains(slotId)) continue;
-                if (_venueProfiles.TryGetValue(slotId, out var extra) && extra != null)
+                if (_venueProfiles.TryGetValue(slotId, out var extra) && extra != null &&
+                    !taken.Contains(extra))
                 {
                     var player = PlayerContainer.GetPlayerFromProfile(extra);
                     if (player != null) PlayerContainer.DisposePlayer(player);
                     PlayerContainer.RemoveProfile(extra);
                 }
+            }
 
-                _venueProfiles.Remove(slotId);
+            _venueProfiles.Clear();
+            foreach (var pair in nextProfiles)
+            {
+                _venueProfiles[pair.Key] = pair.Value;
             }
 
             YargLogger.LogFormatInfo("YAQ venue profiles applied ({0} slots)", _venueSlots.Count);
@@ -2343,19 +2342,37 @@ namespace YARG.YAQ
         private void ApplyPlayers(List<YaqSetPlayer> players)
         {
             players ??= new List<YaqSetPlayer>();
-            var usedSlots = new HashSet<string>();
-
-            for (var i = 0; i < players.Count; i++)
+            var assigned = new Dictionary<string, YaqSetPlayer>(StringComparer.Ordinal);
+            foreach (var request in players)
             {
-                var request = players[i];
-                var slotId = string.IsNullOrEmpty(request.slotId) ? $"legacy_{i}" : request.slotId;
-                usedSlots.Add(slotId);
+                if (request == null || string.IsNullOrEmpty(request.slotId)) continue;
+                if (!_venueProfiles.ContainsKey(request.slotId)) continue;
+                assigned[request.slotId] = request;
+            }
+
+            foreach (var slot in _venueSlots)
+            {
+                if (string.IsNullOrEmpty(slot.slotId)) continue;
+                var profile = GetVenueProfile(slot.slotId);
+                if (profile == null) continue;
+
+                if (!assigned.TryGetValue(slot.slotId, out var request))
+                {
+                    profile.Name = slot.name;
+                    profile.IsBot = false;
+                    var idle = PlayerContainer.GetPlayerFromProfile(profile);
+                    if (idle != null)
+                    {
+                        idle.SittingOut = true;
+                    }
+
+                    continue;
+                }
 
                 var instrument = ParseInstrument(request.instrument);
                 var asBot = request.isBot && !request.isSongMaster;
-                var profile = GetOrCreateVenueProfile(slotId, request.name, instrument, asBot);
-
-                profile.Name = request.name;
+                // Humans take the guest name; bots keep the slot id so device binds never move.
+                profile.Name = asBot ? slot.name : request.name;
                 profile.IsBot = asBot;
                 profile.CurrentInstrument = instrument;
                 profile.PreferredInstrument = instrument;
@@ -2372,16 +2389,6 @@ namespace YARG.YAQ
                 if (player != null)
                 {
                     player.SittingOut = false;
-                }
-            }
-
-            foreach (var (slotId, profile) in _venueProfiles)
-            {
-                if (usedSlots.Contains(slotId)) continue;
-                var player = PlayerContainer.GetPlayerFromProfile(profile);
-                if (player != null)
-                {
-                    player.SittingOut = true;
                 }
             }
         }
@@ -2426,28 +2433,86 @@ namespace YARG.YAQ
             }
         }
 
-        private YargProfile GetOrCreateVenueProfile(string slotId, string name, Instrument instrument, bool isBot)
+        private YargProfile GetVenueProfile(string slotId)
         {
+            if (string.IsNullOrEmpty(slotId)) return null;
             if (_venueProfiles.TryGetValue(slotId, out var existing) && existing != null)
             {
                 return existing;
             }
 
-            var profile = new YargProfile
+            var slot = _venueSlots.FirstOrDefault(item => item.slotId == slotId);
+            if (slot == null || string.IsNullOrEmpty(slot.name)) return null;
+            var byName = PlayerContainer.Profiles.FirstOrDefault(profile => profile.Name == slot.name);
+            if (byName != null)
             {
-                Name = name,
-                IsBot = isBot,
+                _venueProfiles[slotId] = byName;
+            }
+
+            return byName;
+        }
+
+        private YargProfile FindOrCreateVenueProfile(
+            YaqVenueProfile slot,
+            Instrument instrument,
+            HashSet<YargProfile> taken)
+        {
+            if (_venueProfiles.TryGetValue(slot.slotId, out var remembered) &&
+                remembered != null &&
+                !taken.Contains(remembered))
+            {
+                return remembered;
+            }
+
+            var byName = PlayerContainer.Profiles.FirstOrDefault(
+                profile => profile.Name == slot.name && !taken.Contains(profile));
+            if (byName != null) return byName;
+
+            foreach (var old in _venueProfiles.Values)
+            {
+                if (old == null || taken.Contains(old)) continue;
+                if (old.PreferredInstrument == instrument || old.CurrentInstrument == instrument)
+                {
+                    return old;
+                }
+            }
+
+            foreach (var legacyName in LegacyVenueNames(slot, instrument))
+            {
+                var legacy = PlayerContainer.Profiles.FirstOrDefault(
+                    profile => profile.Name == legacyName && !taken.Contains(profile));
+                if (legacy != null) return legacy;
+            }
+
+            return new YargProfile
+            {
+                Name = slot.name,
                 NoteSpeed = 5,
                 HighwayLength = 1,
-                CurrentInstrument = instrument,
-                PreferredInstrument = instrument,
-                CurrentDifficulty = Difficulty.Expert,
-                DifficultyFallback = Difficulty.Expert,
-                GameMode = instrument.ToNativeGameMode(),
             };
-            PlayerContainer.AddProfile(profile);
-            _venueProfiles[slotId] = profile;
-            return profile;
+        }
+
+        private static IEnumerable<string> LegacyVenueNames(YaqVenueProfile slot, Instrument instrument)
+        {
+            var label = instrument switch
+            {
+                Instrument.FiveFretGuitar => "Guitar",
+                Instrument.FiveFretBass => "Bass",
+                Instrument.FourLaneDrums => "Drums",
+                Instrument.Vocals => "Vocals",
+                Instrument.Keys => "Keys",
+                Instrument.ProKeys => "Pro Keys",
+                Instrument.ProDrums => "Pro Drums",
+                Instrument.FiveLaneDrums => "Five-lane Drums",
+                Instrument.EliteDrums => "Elite Drums",
+                _ => instrument.ToString()
+            };
+            yield return label;
+            yield return $"{label} 1";
+            yield return $"{label} 2";
+            yield return $"{instrument}_1";
+            yield return $"{instrument}_2";
+            if (!string.IsNullOrEmpty(slot?.slotId)) yield return slot.slotId;
         }
 
         private static void RemoveLegacyTestBots()
@@ -2514,90 +2579,6 @@ namespace YARG.YAQ
                 dataUrl);
         }
 
-        private const string TestBotPrefix = "YAQ Bot ";
-
-        private static readonly (Instrument instrument, string label)[] TestBotParts =
-        {
-            (Instrument.FiveFretGuitar, "Guitar"),
-            (Instrument.FiveFretBass, "Bass"),
-            (Instrument.FourLaneDrums, "Drums"),
-            (Instrument.Vocals, "Vocals"),
-        };
-
-        private void SyncTestBots(SongEntry song)
-        {
-            RemoveTestBots();
-            if (EventMode.Flags.addTestBots)
-            {
-                AddTestBots(song);
-            }
-        }
-
-        private void RemoveTestBots()
-        {
-            foreach (var player in PlayerContainer.Players.ToList())
-            {
-                if (!IsTestBot(player.Profile)) continue;
-                var profile = player.Profile;
-                PlayerContainer.DisposePlayer(player);
-                PlayerContainer.RemoveProfile(profile);
-            }
-
-            foreach (var profile in PlayerContainer.Profiles.ToList())
-            {
-                if (IsTestBot(profile))
-                {
-                    PlayerContainer.RemoveProfile(profile);
-                }
-            }
-        }
-
-        private void AddTestBots(SongEntry song)
-        {
-            var humans = PlayerContainer.Players
-                .Where(player => !IsTestBot(player.Profile))
-                .Select(player => player.Profile.CurrentInstrument)
-                .ToList();
-
-            foreach (var (instrument, label) in TestBotParts)
-            {
-                if (humans.Any(human => OccupiesTestPart(human, instrument))) continue;
-                if (!SongHasPart(song, instrument)) continue;
-
-                var name = TestBotPrefix + label;
-                var profile = PlayerContainer.Profiles.FirstOrDefault(p => p.Name == name && p.IsBot)
-                    ?? new YargProfile
-                    {
-                        Name = name,
-                        IsBot = true,
-                        NoteSpeed = 5,
-                        HighwayLength = 1,
-                        CurrentInstrument = instrument,
-                        PreferredInstrument = instrument,
-                        CurrentDifficulty = Difficulty.Expert,
-                        DifficultyFallback = Difficulty.Expert,
-                        GameMode = instrument.ToNativeGameMode(),
-                    };
-
-                profile.CurrentInstrument = instrument;
-                profile.PreferredInstrument = instrument;
-                profile.CurrentDifficulty = Difficulty.Expert;
-                profile.DifficultyFallback = Difficulty.Expert;
-                profile.GameMode = instrument.ToNativeGameMode();
-                profile.IsBot = true;
-
-                if (!PlayerContainer.Profiles.Contains(profile))
-                {
-                    PlayerContainer.AddProfile(profile);
-                }
-
-                if (!PlayerContainer.IsProfileTaken(profile))
-                {
-                    PlayerContainer.CreatePlayerFromProfile(profile, true);
-                }
-            }
-        }
-
         private void SitOutMissingParts(SongEntry song)
         {
             if (song == null) return;
@@ -2647,33 +2628,6 @@ namespace YARG.YAQ
             {
                 return false;
             }
-        }
-
-        private static bool OccupiesTestPart(Instrument playerInstrument, Instrument botPart)
-        {
-            return botPart switch
-            {
-                Instrument.FiveFretGuitar => playerInstrument is
-                    Instrument.FiveFretGuitar or Instrument.SixFretGuitar or
-                    Instrument.FiveFretRhythm or Instrument.FiveFretCoopGuitar or
-                    Instrument.SixFretRhythm or Instrument.SixFretCoopGuitar or
-                    Instrument.ProGuitar_17Fret or Instrument.ProGuitar_22Fret,
-                Instrument.FiveFretBass => playerInstrument is
-                    Instrument.FiveFretBass or Instrument.SixFretBass or
-                    Instrument.ProBass_17Fret or Instrument.ProBass_22Fret,
-                Instrument.FourLaneDrums => playerInstrument is
-                    Instrument.FourLaneDrums or Instrument.FiveLaneDrums or
-                    Instrument.ProDrums or Instrument.EliteDrums,
-                Instrument.Vocals => playerInstrument is Instrument.Vocals or Instrument.Harmony,
-                _ => playerInstrument == botPart
-            };
-        }
-
-        private static bool IsTestBot(YargProfile profile)
-        {
-            return profile != null && profile.IsBot &&
-                   !string.IsNullOrEmpty(profile.Name) &&
-                   profile.Name.StartsWith(TestBotPrefix);
         }
 
         private static string YaqInstrumentId(Instrument instrument)

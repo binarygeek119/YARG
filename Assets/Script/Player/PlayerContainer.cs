@@ -711,6 +711,13 @@ namespace YARG.Player
                 return 0;
             }
 
+            if (YARG.EventMode.IsActive)
+            {
+                // Don't persist guest names onto venue slots. Bindings stay on the Guid.
+                BindingsContainer.SaveBindings();
+                return _profiles.Count;
+            }
+
             if (updateOrder)
             {
                 UpdateProfileOrder();

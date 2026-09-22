@@ -44,7 +44,7 @@ Pushed as `{ type: "settings.update", flags }` on connect and when admin saves. 
 | `showUpNextHud` | `true` | Show idle OnGUI up-next / ready HUD |
 | `skipMainMenu` | `true` | Hide main menu chrome when Menu Scene is used for Difficulty Select |
 | `openDifficultySelect` | `true` | Open Difficulty Select on `set.prepare` / `set.launch` |
-| `addTestBots` | `false` | Fill empty guitar, bass, drums, and vocals with YAQ Bot test players |
+| `addTestBots` | `false` | Seat unused venue slots (`bass_01`, `drums_01`, `mic_01`, …) as bots for parts the song actually has. Does not create extra YARG profiles. |
 
 Toggle these under **YAQ Admin → YARG event flags**.
 
@@ -85,7 +85,8 @@ While YARG is connected, Admin → **Enter Event Mode** / **Exit Event Mode** (o
 
 ## Notes
 
-- Bind controllers/profiles once in a normal YARG session before the event if possible.
+- Bind controllers to venue slots (`guitar_01`, `bass_01`, `drums_01`, `mic_01`, …) after **Exit Event Mode**. Re-entering reuses those profiles by name/Guid; guests only rename the slot for the song.
+- Event Mode does not write YARG local scores or replays. Guest scores stay in YAQ.
 - YAQ folder-scan hashes are provisional until YARG syncs; prefer launching YARG Event before guests queue when possible.
 - LGPL-3.0 (same as upstream YARG). Keep this fork clearly marked as modified for events.
 

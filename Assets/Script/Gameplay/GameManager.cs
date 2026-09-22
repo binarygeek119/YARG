@@ -672,14 +672,17 @@ namespace YARG.Gameplay
 #nullable enable
             ReplayInfo? replayInfo = null;
 #nullable disable
-            try
+            if (!EventMode.IsActive)
             {
-                _isReplaySaved = false;
-                replayInfo = SaveReplay(_songRunner.InputTime, ScoreContainer.ScoreReplayDirectory);
-            }
-            catch (Exception e)
-            {
-                YargLogger.LogException(e, "Failed to save replay!");
+                try
+                {
+                    _isReplaySaved = false;
+                    replayInfo = SaveReplay(_songRunner.InputTime, ScoreContainer.ScoreReplayDirectory);
+                }
+                catch (Exception e)
+                {
+                    YargLogger.LogException(e, "Failed to save replay!");
+                }
             }
 
             // Pass the score info to the stats screen
@@ -708,7 +711,10 @@ namespace YARG.Gameplay
                 ReplayInfo = replayInfo,
             };
 
-            RecordScores(replayInfo);
+            if (!EventMode.IsActive)
+            {
+                RecordScores(replayInfo);
+            }
 
             if (EventMode.IsActive && EventModeController.Instance != null)
             {
@@ -723,6 +729,11 @@ namespace YARG.Gameplay
 
         private void RecordScores(ReplayInfo replayInfo)
         {
+            if (EventMode.IsActive)
+            {
+                return;
+            }
+
             if (!ScoreContainer.IsBandScoreValid(SongSpeed))
             {
                 return;
@@ -872,6 +883,11 @@ namespace YARG.Gameplay
         public ReplayInfo? SaveReplay(double length, string directory)
 #nullable disable
         {
+            if (EventMode.IsActive)
+            {
+                return null;
+            }
+
             if (_isReplaySaved)
             {
                 return null;
