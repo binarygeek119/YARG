@@ -2676,6 +2676,19 @@ namespace YARG.YAQ
                    profile.Name.StartsWith(TestBotPrefix);
         }
 
+        private static string YaqInstrumentId(Instrument instrument)
+        {
+            return instrument switch
+            {
+                Instrument.FiveFretCoopGuitar => "FiveFretCoop",
+                Instrument.ProGuitar_17Fret => "ProGuitar_17",
+                Instrument.ProGuitar_22Fret => "ProGuitar_22",
+                Instrument.ProBass_17Fret => "ProBass_17",
+                Instrument.ProBass_22Fret => "ProBass_22",
+                _ => instrument.ToString()
+            };
+        }
+
         private static Instrument ParseInstrument(string value)
         {
             return Enum.TryParse(value, true, out Instrument instrument)
@@ -2699,13 +2712,26 @@ namespace YARG.YAQ
             foreach (var song in SongContainer.Songs)
             {
                 var instruments = new List<string>();
+                var chartDiffs = new Dictionary<string, List<string>>();
                 foreach (Instrument instrument in Enum.GetValues(typeof(Instrument)))
                 {
+                    if (instrument == Instrument.Band) continue;
                     try
                     {
-                        if (song.HasInstrument(instrument))
+                        if (!song.HasInstrument(instrument)) continue;
+                        var id = YaqInstrumentId(instrument);
+                        if (!instruments.Contains(id)) instruments.Add(id);
+                        foreach (Difficulty difficulty in Enum.GetValues(typeof(Difficulty)))
                         {
-                            instruments.Add(instrument.ToString());
+                            if (difficulty == Difficulty.Beginner) continue;
+                            if (!song.HasDifficultyForInstrument(instrument, difficulty)) continue;
+                            if (!chartDiffs.TryGetValue(id, out var diffs))
+                            {
+                                diffs = new List<string>();
+                                chartDiffs[id] = diffs;
+                            }
+                            var name = difficulty.ToString();
+                            if (!diffs.Contains(name)) diffs.Add(name);
                         }
                     }
                     catch
@@ -2725,6 +2751,7 @@ namespace YARG.YAQ
                     charter = song.Charter.ToString(),
                     folderPath = FirstNonEmpty(song.ActualLocation, song.Location, song.SortBasedLocation),
                     instruments,
+                    chartDiffs,
                     source = "yarg",
                     verified = true
                 });
